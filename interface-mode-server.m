@@ -111,16 +111,16 @@ void signalHandler(int signal) {
   NSAppearance *newAppearance =
       [[NSApplication sharedApplication] effectiveAppearance];
   NSString *appearanceName = [newAppearance name];
-  BOOL newLightMode =
+  BOOL newMode =
       ![appearanceName localizedCaseInsensitiveContainsString:@"dark"];
 
   // Check if state changed
-  if (newLightMode != self.isLightMode) {
-    BOOL oldLightMode = self.isLightMode;
-    self.isLightMode = newLightMode;
+  if (newMode != self.isLightMode) {
+    BOOL oldMode = self.isLightMode;
+    self.isLightMode = newMode;
     self.currentAppearance = newAppearance;
 
-    [self outputStateChange:newLightMode oldMode:oldLightMode];
+    [self outputStateChange:newMode oldMode:oldMode];
   }
 }
 
