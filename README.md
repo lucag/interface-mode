@@ -75,10 +75,24 @@ dark
 # Stop the server with Ctrl+C
 ```
 
+## Project Structure
+
+```
+interface-mode/
+├── interface-mode.m          # Original interface mode checker
+├── interface-mode-server.m   # Continuous monitoring server
+├── makefile                  # Build system
+├── README.md                 # This documentation
+├── .gitignore               # Git ignore rules
+└── target/                  # Build output directory (created by make)
+    ├── interface-mode       # Compiled original program
+    ├── interface-mode-server # Compiled server program
+    └── *.dSYM/             # Debug symbols (if built with debug)
+```
+
 ## Building
 
 ### Prerequisites
-
 - macOS with Xcode Command Line Tools
 - clang compiler
 
@@ -93,8 +107,7 @@ make interface-mode
 make interface-mode-server
 
 # Build debug versions
-make interface-mode-debug
-make interface-mode-server-debug
+make debug
 
 # Clean build artifacts
 make clean
@@ -102,6 +115,8 @@ make clean
 # Run tests
 make test
 ```
+
+**Note**: All executables are built in the `target/` directory to keep the project root clean.
 
 ## Installation
 
@@ -175,7 +190,7 @@ Both programs use the macOS AppKit framework to detect the current interface mod
 ### Compilation
 
 ```bash
-clang -framework AppKit -framework Foundation -O2 source.m -o executable
+clang -framework AppKit -framework Foundation -O2 source.m -o target/executable
 ```
 
 ## Use Cases
@@ -228,3 +243,4 @@ done
 ## License
 
 This project is open source. Feel free to use and modify as needed.
+

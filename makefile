@@ -6,58 +6,69 @@ RELEASE_CFLAGS = -O2 -DNDEBUG
 MACOS_CFLAGS = -mmacosx-version-min=10.14
 FRAMEWORKS = -framework AppKit -framework Foundation
 
+# Build output directory
+TARGET_DIR = target
+
 # Installation paths (customizable)
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 MANDIR = $(PREFIX)/share/man/man1
 
 # Default target
-all: interface-mode interface-mode-server
+all: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
+
+# Convenience targets
+interface-mode: $(TARGET_DIR)/interface-mode
+interface-mode-server: $(TARGET_DIR)/interface-mode-server
+debug: $(TARGET_DIR)/interface-mode-debug $(TARGET_DIR)/interface-mode-server-debug
+
+# Create target directory
+$(TARGET_DIR):
+	mkdir -p $(TARGET_DIR)
 
 # Original program (enhanced)
-interface-mode: interface-mode.m makefile
+$(TARGET_DIR)/interface-mode: interface-mode.m makefile | $(TARGET_DIR)
 	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(RELEASE_CFLAGS) $< -o $@
 
 # New server program
-interface-mode-server: interface-mode-server.m makefile
+$(TARGET_DIR)/interface-mode-server: interface-mode-server.m makefile | $(TARGET_DIR)
 	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(RELEASE_CFLAGS) $< -o $@
 
 # Debug versions
-interface-mode-debug: interface-mode.m makefile
+$(TARGET_DIR)/interface-mode-debug: interface-mode.m makefile | $(TARGET_DIR)
 	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(DEBUG_CFLAGS) $< -o $@
 
-interface-mode-server-debug: interface-mode-server.m makefile
+$(TARGET_DIR)/interface-mode-server-debug: interface-mode-server.m makefile | $(TARGET_DIR)
 	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(DEBUG_CFLAGS) $< -o $@
 
 # Clean
 clean:
-	rm -f interface-mode interface-mode-server
-	rm -f interface-mode-debug interface-mode-server-debug
+	rm -rf $(TARGET_DIR)
 
 # Test
-test: interface-mode interface-mode-server
+test: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
 	@echo "Testing interface-mode..."
-	@./interface-mode -h
+	@$(TARGET_DIR)/interface-mode -h
 	@echo "Testing interface-mode-server..."
-	@./interface-mode-server --help || true
+	@$(TARGET_DIR)/interface-mode-server --help || true
 
 # Quick check
 check: clean all test
 
 # Development
-dev: interface-mode-server-debug
+dev: $(TARGET_DIR)/interface-mode-server-debug
 	@echo "Built debug version of server"
 
-run-server: interface-mode-server
+run-server: $(TARGET_DIR)/interface-mode-server
 	@echo "Starting interface-mode-server..."
-	@./interface-mode-server
+	@$(TARGET_DIR)/interface-mode-server
 
 # Installation with customizable PREFIX
-install: interface-mode interface-mode-server
+install: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
 	@echo "Installing to $(PREFIX)..."
 	mkdir -p $(BINDIR)
-	cp interface-mode $(BINDIR)/
-	cp interface-mode-server $(BINDIR)/
+	cp $(TARGET_DIR)/interface-mode $(BINDIR)/
+	cp $(TARGET_DIR)/interface-mode-server $(BINDIR)/
 	chmod +x $(BINDIR)/interface-mode
 	chmod +x $(BINDIR)/interface-mode-server
 	@echo "Installed interface-mode and interface-mode-server to $(BINDIR)"
@@ -95,6 +106,8 @@ help:
 	@echo "  install-info     - Show installation configuration"
 	@echo "  run-server       - Build and run server"
 	@echo "  help             - Show this help"
+	@echo ""
+	@echo "Build output directory: $(TARGET_DIR)/"
 	@echo ""
 	@echo "Installation examples:"
 	@echo "  make install                    # Install to /usr/local"

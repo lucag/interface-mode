@@ -1,0 +1,14 @@
+# Build output directory
+target/
+
+# Debug symbols
+*.dSYM/
+
+# Object files
+*.o
+
+# Backup files
+*~
+
+# macOS
+.DS_Store
