@@ -17,9 +17,9 @@
 
 void usage(char *progname) {
   fprintf(stdout,
-          "Usage: %s [ -v | -h ]\n"
-          "       -v: verbose: prints Light or Dark\n"
-          "       -h: help: prints this usage\n\n"
+          "Usage: %s [ -v | --verbose | -h | --help ]\n"
+          "       -v, --verbose: verbose: prints Light or Dark\n"
+          "       -h, --help:    help: prints this usage\n\n"
           "The exit value is 0 for light, -1 for dark.\n",
           progname);
 }
@@ -42,10 +42,20 @@ int main(int argc, char **argv) {
   /* NSLog(@"%@", appearance); */
 
   if (argc == 2) {
-    if (strcmp(argv[1], "-v") == 0)
+    if (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--verbose") == 0) {
       fprintf(stdout, "%s\n", light ? "Light" : "Dark");
-    else if (strcmp(argv[1], "-h") == 0)
+    } else if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
       usage(basename(argv[0]));
+      exit(0);
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", argv[1]);
+      usage(basename(argv[0]));
+      exit(1);
+    }
+  } else if (argc > 2) {
+    fprintf(stderr, "Too many arguments.\n");
+    usage(basename(argv[0]));
+    exit(1);
   }
   exit(light ? 0 : -1);
 }

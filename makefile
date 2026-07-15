@@ -49,6 +49,9 @@ clean:
 test: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
 	@echo "Testing interface-mode..."
 	@$(TARGET_DIR)/interface-mode -h
+	@$(TARGET_DIR)/interface-mode --help
+	@$(TARGET_DIR)/interface-mode --verbose
+	@! $(TARGET_DIR)/interface-mode --invalid-option 2>/dev/null
 	@echo "Testing interface-mode-server..."
 	@$(TARGET_DIR)/interface-mode-server --help || true
 

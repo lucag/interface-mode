@@ -11,13 +11,13 @@ A simple utility that checks the current macOS interface mode and exits with app
 **Usage:**
 
 ```bash
-./interface-mode [ -v | -h ]
+./interface-mode [ -v | --verbose | -h | --help ]
 ```
 
 **Options:**
 
-- `-v`: Verbose output - prints "Light" or "Dark"
-- `-h`: Help - shows usage information
+- `-v, --verbose`: Verbose output - prints "Light" or "Dark"
+- `-h, --help`: Help - shows usage information
 
 **Exit codes:**
 
