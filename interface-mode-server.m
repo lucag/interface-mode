@@ -72,10 +72,10 @@ void signalHandler(int signal) {
   self.currentAppearance = appearance;
 
   NSString *appearanceName = [appearance name];
-  BOOL newLightMode =
+  BOOL isLightMode =
       ![appearanceName localizedCaseInsensitiveContainsString:@"dark"];
 
-  self.isLightMode = newLightMode;
+  self.isLightMode = isLightMode;
 }
 
 - (void)setupNotifications {
@@ -124,20 +124,20 @@ void signalHandler(int signal) {
   }
 }
 
-- (void)outputStateChange:(BOOL)newLightMode oldMode:(BOOL)oldLightMode {
-  NSString *newMode = newLightMode ? @"light" : @"dark";
+- (void)outputStateChange:(BOOL)newMode oldMode:(BOOL)oldMode {
+  NSString *mode = newMode ? @"light" : @"dark";
   NSString *changeType = [NSString
-      stringWithFormat:@"%@_to_%@", oldLightMode ? @"light" : @"dark", newMode];
+      stringWithFormat:@"%@_to_%@", oldMode ? @"light" : @"dark", mode];
 
   if (self.simpleOutput) {
-    printf("%s\n", [newMode UTF8String]);
+    printf("%s\n", [mode UTF8String]);
   } else if (self.jsonOutput) {
     NSString *timestamp =
         [self.timestampFormatter stringFromDate:[NSDate date]];
     NSString *jsonOutput = [NSString
         stringWithFormat:
             @"{\"timestamp\":\"%@\",\"mode\":\"%@\",\"change\":\"%@\"}\n",
-            timestamp, newMode, changeType];
+            timestamp, mode, changeType];
     printf("%s", [jsonOutput UTF8String]);
   }
 
