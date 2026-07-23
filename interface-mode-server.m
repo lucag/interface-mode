@@ -130,7 +130,7 @@ void signalHandler(int signal) {
       stringWithFormat:@"%@_to_%@", oldMode ? @"light" : @"dark", mode];
 
   if (self.simpleOutput) {
-    printf("%s\n", [mode UTF8String]);
+    fprintf(stdout, "%s\n", [mode UTF8String]);
   } else if (self.jsonOutput) {
     NSString *timestamp =
         [self.timestampFormatter stringFromDate:[NSDate date]];
@@ -138,7 +138,7 @@ void signalHandler(int signal) {
         stringWithFormat:
             @"{\"timestamp\":\"%@\",\"mode\":\"%@\",\"change\":\"%@\"}\n",
             timestamp, mode, changeType];
-    printf("%s", [jsonOutput UTF8String]);
+    fprintf(stdout, "%s", [jsonOutput UTF8String]);
   }
 
   fflush(stdout);
