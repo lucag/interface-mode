@@ -39,7 +39,12 @@ def main():
         # The signal may have reached only this script, so pass it on. The
         # Watcher exits 0 on SIGTERM, however often asked, and the loop
         # below ends with its output; a hook already running finishes first.
+        # Pass it on once: Python runs a handler between any two bytecodes,
+        # so under a burst of signals a handler that does more than return
+        # nests inside itself until it hits the recursion limit.
         nonlocal stopping
+        if stopping:
+            return
         stopping = True
         if watcher is not None:
             watcher.terminate()
