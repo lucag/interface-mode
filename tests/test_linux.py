@@ -294,20 +294,22 @@ class WatcherTest(PortalTestCase):
                 watcher.process.send_signal(signum)
                 self.assertEqual(watcher.process.wait(timeout=5), 0)
 
-    def test_a_second_stop_request_is_still_clean(self):
+    def test_further_stop_requests_are_still_clean(self):
         # e.g. Ctrl+C reaching the whole process group, then a parent script
         # or supervisor also asking the Watcher to stop.
         self.start_portal(PREFER_LIGHT)
-        # The second request lands at a range of moments during shutdown.
-        for step in range(30):
-            with self.subTest(delay_ms=step * 0.1):
-                watcher = self.watch()
-                self.assertJsonReport(watcher.next_line(), "light")
-                watcher.process.send_signal(signal.SIGINT)
-                time.sleep(step * 0.0001)
-                if watcher.process.poll() is None:
-                    watcher.process.send_signal(signal.SIGTERM)
-                self.assertEqual(watcher.process.wait(timeout=5), 0)
+        watcher = self.watch()
+        self.assertJsonReport(watcher.next_line(), "light")
+        pid = watcher.process.pid
+        os.kill(pid, signal.SIGINT)
+        # Keep asking until it has exited, so requests land all through its
+        # shutdown, right up to the end. WNOWAIT leaves it to be reaped below,
+        # so its pid can't be reused while it is still being signalled.
+        deadline = time.monotonic() + 5
+        while os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+            self.assertLess(time.monotonic(), deadline, "the Watcher stops")
+            os.kill(pid, signal.SIGTERM)
+        self.assertEqual(watcher.process.wait(timeout=5), 0)
 
     def test_exits_when_the_portal_goes_away(self):
         self.start_portal(PREFER_DARK)

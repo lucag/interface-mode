@@ -147,12 +147,22 @@ static void request_stop(int signum) {
   errno = saved_errno;
 }
 
+/* Consume the stop requests that have arrived so far. */
+static void drain_stop_requests(void) {
+  char requests[64];
+  while (read(stop_pipe[0], requests, sizeof requests) > 0) {
+  }
+}
+
 static bool catch_stop_requests(char **error) {
   if (stop_pipe[0] != -1) {
+    /* Requests that reached an earlier Watcher on their way out were its. */
+    drain_stop_requests();
     return true;
   }
   GError *err = NULL;
   if (!g_unix_open_pipe(stop_pipe, FD_CLOEXEC, &err) ||
+      !g_unix_set_fd_nonblocking(stop_pipe[0], TRUE, &err) ||
       !g_unix_set_fd_nonblocking(stop_pipe[1], TRUE, &err)) {
     *error = take_message(err);
     return false;
@@ -169,6 +179,7 @@ static bool catch_stop_requests(char **error) {
 static gboolean on_stop_requested(int fd, GIOCondition condition,
                                   gpointer loop) {
   (void)fd, (void)condition;
+  drain_stop_requests();
   g_main_loop_quit(loop);
   return G_SOURCE_CONTINUE;
 }
