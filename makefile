@@ -17,6 +17,12 @@ BINDIR = $(PREFIX)/bin
 MANDIR = $(PREFIX)/share/man/man1
 
 ifeq ($(UNAME),Darwin)
+PROGRAMS = interface-mode interface-mode-server
+else
+PROGRAMS = interface-mode
+endif
+
+ifeq ($(UNAME),Darwin)
 
 # Default target
 all: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
@@ -102,29 +108,35 @@ endif
 check: clean all test
 
 # Development
+ifeq ($(UNAME),Darwin)
 dev: $(TARGET_DIR)/interface-mode-server-debug
 	@echo "Built debug version of server"
 
 run-server: $(TARGET_DIR)/interface-mode-server
 	@echo "Starting interface-mode-server..."
 	@$(TARGET_DIR)/interface-mode-server
+else
+dev: $(TARGET_DIR)/interface-mode-debug
+	@echo "Built debug version"
+
+run-server: $(TARGET_DIR)/interface-mode
+	@echo "Starting interface-mode --watch..."
+	@$(TARGET_DIR)/interface-mode --watch
+endif
 
 # Installation with customizable PREFIX
-install: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
+install: $(addprefix $(TARGET_DIR)/,$(PROGRAMS))
 	@echo "Installing to $(PREFIX)..."
 	mkdir -p $(BINDIR)
-	cp $(TARGET_DIR)/interface-mode $(BINDIR)/
-	cp $(TARGET_DIR)/interface-mode-server $(BINDIR)/
-	chmod +x $(BINDIR)/interface-mode
-	chmod +x $(BINDIR)/interface-mode-server
-	@echo "Installed interface-mode and interface-mode-server to $(BINDIR)"
+	cp $^ $(BINDIR)/
+	chmod +x $(addprefix $(BINDIR)/,$(PROGRAMS))
+	@echo "Installed $(PROGRAMS) to $(BINDIR)"
 
 # Uninstall from the same PREFIX
 uninstall:
 	@echo "Uninstalling from $(PREFIX)..."
-	rm -f $(BINDIR)/interface-mode
-	rm -f $(BINDIR)/interface-mode-server
-	@echo "Removed interface-mode and interface-mode-server from $(BINDIR)"
+	rm -f $(addprefix $(BINDIR)/,$(PROGRAMS))
+	@echo "Removed $(PROGRAMS) from $(BINDIR)"
 
 # Show installation info
 install-info:

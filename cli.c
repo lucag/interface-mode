@@ -15,8 +15,16 @@ enum { EXIT_LIGHT = 0, EXIT_DARK = 1, EXIT_ERROR = 2 };
 
 typedef enum { FORMAT_NONE, FORMAT_TEXT, FORMAT_JSON } Format;
 
-static bool is_option(const char *arg, const char *shrt, const char *lng) {
-  return strcmp(arg, shrt) == 0 || strcmp(arg, lng) == 0;
+static bool is_option(const char *arg, const char *short_name,
+                      const char *long_name) {
+  return strcmp(arg, short_name) == 0 || strcmp(arg, long_name) == 0;
+}
+
+/* Report a failure from the platform backend and return the exit status. */
+static int platform_error(char *error) {
+  fprintf(stderr, "interface-mode: %s\n", error);
+  free(error);
+  return EXIT_ERROR;
 }
 
 static const char *mode_name(Mode mode) {
@@ -87,9 +95,7 @@ static int watch(Format format) {
                        MODE_LIGHT};
   char *error = NULL;
   if (!platform_watch(report_if_changed, &reporter, &error)) {
-    fprintf(stderr, "interface-mode: %s\n", error);
-    free(error);
-    return EXIT_ERROR;
+    return platform_error(error);
   }
   return EXIT_SUCCESS;
 }
@@ -126,9 +132,7 @@ int main(int argc, char **argv) {
   Mode mode;
   char *error = NULL;
   if (!platform_read_mode(&mode, &error)) {
-    fprintf(stderr, "interface-mode: %s\n", error);
-    free(error);
-    return EXIT_ERROR;
+    return platform_error(error);
   }
   print_report(format, mode);
   return mode == MODE_DARK ? EXIT_DARK : EXIT_LIGHT;

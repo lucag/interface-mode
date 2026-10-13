@@ -29,15 +29,33 @@ static GVariant *call_settings(GDBusConnection *bus, const char *method,
       G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, err);
 }
 
-/* Strip any number of variant wrappers from a (v) reply; returns a new ref. */
-static GVariant *unwrap(GVariant *reply) {
-  GVariant *value = g_variant_get_child_value(reply, 0);
+/* Move a GError's message into a malloc'ed string, freeing the error. */
+static char *take_message(GError *err) {
+  char *message = strdup(err->message);
+  g_error_free(err);
+  return message;
+}
+
+/* Strip any number of variant wrappers, taking over the caller's ref. The
+ * deprecated Settings.Read wraps the value in one more than ReadOne does. */
+static GVariant *unwrap(GVariant *value) {
   while (g_variant_is_of_type(value, G_VARIANT_TYPE_VARIANT)) {
     GVariant *inner = g_variant_get_variant(value);
     g_variant_unref(value);
     value = inner;
   }
   return value;
+}
+
+/* The Interface Mode a color-scheme value stands for; false if it isn't one. */
+static bool mode_from_color_scheme(GVariant *value, Mode *mode) {
+  if (!g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+    return false;
+  }
+  /* 0 is "no preference", which counts as Light; 2 is "prefer light". */
+  *mode = g_variant_get_uint32(value) == COLOR_SCHEME_PREFER_DARK ? MODE_DARK
+                                                                  : MODE_LIGHT;
+  return true;
 }
 
 /* Read color-scheme over `bus`; on failure set *error and return false. */
@@ -51,31 +69,26 @@ static bool read_mode(GDBusConnection *bus, Mode *mode, char **error) {
     reply = call_settings(bus, "Read", &err);
   }
   if (reply == NULL) {
-    *error = strdup(err->message);
-    g_error_free(err);
+    *error = take_message(err);
     return false;
   }
 
-  GVariant *value = unwrap(reply);
+  GVariant *value = unwrap(g_variant_get_child_value(reply, 0));
   g_variant_unref(reply);
-  if (!g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+  bool ok = mode_from_color_scheme(value, mode);
+  if (!ok) {
     *error = g_strdup_printf("unexpected color-scheme type '%s' from portal",
                              g_variant_get_type_string(value));
-    g_variant_unref(value);
-    return false;
   }
-  *mode = g_variant_get_uint32(value) == COLOR_SCHEME_PREFER_DARK ? MODE_DARK
-                                                                  : MODE_LIGHT;
   g_variant_unref(value);
-  return true;
+  return ok;
 }
 
 static GDBusConnection *session_bus(char **error) {
   GError *err = NULL;
   GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (bus == NULL) {
-    *error = strdup(err->message);
-    g_error_free(err);
+    *error = take_message(err);
   }
   return bus;
 }
@@ -104,17 +117,11 @@ static void on_setting_changed(GDBusConnection *bus, const char *sender,
   const char *ns, *key;
   GVariant *value;
   g_variant_get(params, "(&s&sv)", &ns, &key, &value);
-  while (g_variant_is_of_type(value, G_VARIANT_TYPE_VARIANT)) {
-    GVariant *inner = g_variant_get_variant(value);
-    g_variant_unref(value);
-    value = inner;
-  }
+  value = unwrap(value);
+  Mode mode;
   if (strcmp(ns, APPEARANCE_NS) == 0 && strcmp(key, COLOR_SCHEME_KEY) == 0 &&
-      g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
-    observer->observe(g_variant_get_uint32(value) == COLOR_SCHEME_PREFER_DARK
-                          ? MODE_DARK
-                          : MODE_LIGHT,
-                      observer->data);
+      mode_from_color_scheme(value, &mode)) {
+    observer->observe(mode, observer->data);
   }
   g_variant_unref(value);
 }
