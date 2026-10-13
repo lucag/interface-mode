@@ -7,10 +7,13 @@
 
 #include "interface-mode.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <gio/gio.h>
 #include <glib-unix.h>
 #include <signal.h>
 #include <string.h>
+#include <unistd.h>
 
 #define PORTAL_NAME "org.freedesktop.portal.Desktop"
 #define PORTAL_PATH "/org/freedesktop/portal/desktop"
@@ -126,7 +129,46 @@ static void on_setting_changed(GDBusConnection *bus, const char *sender,
   g_variant_unref(value);
 }
 
-static gboolean quit_loop(gpointer loop) {
+/*
+ * SIGINT and SIGTERM ask the Watcher to stop. Their handler only writes a
+ * byte to this pipe, which the main loop watches. It stays installed for the
+ * rest of the process, so a second request during shutdown (Ctrl+C reaching a
+ * whole process group, then a parent asking again) is absorbed instead of
+ * killing the Watcher on its way out, whichever thread it is delivered to.
+ */
+static int stop_pipe[2] = {-1, -1};
+
+static void request_stop(int signum) {
+  (void)signum;
+  int saved_errno = errno;
+  /* A full pipe means a stop request is already pending. */
+  ssize_t written = write(stop_pipe[1], "", 1);
+  (void)written;
+  errno = saved_errno;
+}
+
+static bool catch_stop_requests(char **error) {
+  if (stop_pipe[0] != -1) {
+    return true;
+  }
+  GError *err = NULL;
+  if (!g_unix_open_pipe(stop_pipe, FD_CLOEXEC, &err) ||
+      !g_unix_set_fd_nonblocking(stop_pipe[1], TRUE, &err)) {
+    *error = take_message(err);
+    return false;
+  }
+  struct sigaction action = {0};
+  action.sa_handler = request_stop;
+  action.sa_flags = SA_RESTART;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, NULL);
+  sigaction(SIGTERM, &action, NULL);
+  return true;
+}
+
+static gboolean on_stop_requested(int fd, GIOCondition condition,
+                                  gpointer loop) {
+  (void)fd, (void)condition;
   g_main_loop_quit(loop);
   return G_SOURCE_CONTINUE;
 }
@@ -149,11 +191,14 @@ bool platform_watch(ModeCallback observe, void *data, char **error) {
   if (bus == NULL) {
     return false;
   }
+  if (!catch_stop_requests(error)) {
+    g_object_unref(bus);
+    return false;
+  }
   /* Set everything up before the first read, so neither a change nor a stop
    * request can slip in between it and the loop. */
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-  guint on_sigint = g_unix_signal_add(SIGINT, quit_loop, loop);
-  guint on_sigterm = g_unix_signal_add(SIGTERM, quit_loop, loop);
+  guint on_stop = g_unix_fd_add(stop_pipe[0], G_IO_IN, on_stop_requested, loop);
   Observer observer = {observe, data};
   guint subscription = g_dbus_connection_signal_subscribe(
       bus, PORTAL_NAME, SETTINGS_IFACE, "SettingChanged", PORTAL_PATH,
@@ -176,8 +221,7 @@ bool platform_watch(ModeCallback observe, void *data, char **error) {
       ok = false;
     }
   }
-  g_source_remove(on_sigint);
-  g_source_remove(on_sigterm);
+  g_source_remove(on_stop);
   g_main_loop_unref(loop);
   g_dbus_connection_signal_unsubscribe(bus, subscription);
   g_object_unref(bus);

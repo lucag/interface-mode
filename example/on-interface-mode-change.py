@@ -11,6 +11,7 @@ as the systemd unit next to it restart the pair.
 
 import json
 import os
+import signal
 import subprocess
 
 # Where interface-mode lives, if it isn't on PATH.
@@ -31,6 +32,8 @@ HOOKS = {"dark": on_dark, "light": on_light}
 
 
 def main():
+    # Stop on SIGTERM the same way as on Ctrl+C.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     with subprocess.Popen(
         [INTERFACE_MODE, "--watch"], stdout=subprocess.PIPE, text=True
     ) as watcher:
@@ -40,7 +43,9 @@ def main():
             for line in watcher.stdout:
                 HOOKS[json.loads(line)["mode"]]()
         except KeyboardInterrupt:
-            pass  # Ctrl+C reaches the Watcher too, which then exits 0
+            # The signal may have reached only this script, so stop the
+            # Watcher too; it exits 0 on SIGTERM.
+            watcher.terminate()
     return watcher.returncode
 
 

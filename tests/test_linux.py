@@ -11,6 +11,7 @@ import re
 import selectors
 import signal
 import subprocess
+import time
 import unittest
 
 import dbus
@@ -291,6 +292,21 @@ class WatcherTest(PortalTestCase):
                 watcher = self.watch()
                 self.assertJsonReport(watcher.next_line(), "light")
                 watcher.process.send_signal(signum)
+                self.assertEqual(watcher.process.wait(timeout=5), 0)
+
+    def test_a_second_stop_request_is_still_clean(self):
+        # e.g. Ctrl+C reaching the whole process group, then a parent script
+        # or supervisor also asking the Watcher to stop.
+        self.start_portal(PREFER_LIGHT)
+        # The second request lands at a range of moments during shutdown.
+        for step in range(30):
+            with self.subTest(delay_ms=step * 0.1):
+                watcher = self.watch()
+                self.assertJsonReport(watcher.next_line(), "light")
+                watcher.process.send_signal(signal.SIGINT)
+                time.sleep(step * 0.0001)
+                if watcher.process.poll() is None:
+                    watcher.process.send_signal(signal.SIGTERM)
                 self.assertEqual(watcher.process.wait(timeout=5), 0)
 
     def test_exits_when_the_portal_goes_away(self):
