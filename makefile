@@ -132,6 +132,13 @@ clean:
 # Quick check
 check: clean all test
 
+# Build and run the Linux tests in Docker (tests/Dockerfile), from any host.
+# The container works on a copy, so the host's target/ is left alone.
+test-linux:
+	docker build -q -t interface-mode-test tests
+	docker run --rm -v "$(CURDIR)":/src:ro interface-mode-test \
+		sh -c 'cp -r /src /w && cd /w && rm -rf $(TARGET_DIR) && make test'
+
 # Installation with customizable PREFIX
 install: $(addprefix $(TARGET_DIR)/,$(PROGRAMS))
 	@echo "Installing to $(PREFIX)..."
@@ -164,6 +171,7 @@ help:
 	$(PLATFORM_HELP)
 	@echo "  clean            - Remove built executables"
 	@echo "  check            - Clean, build and test"
+	@echo "  test-linux       - Run the Linux tests in Docker, from any host"
 	@echo "  install          - Install to \$$PREFIX/bin (default: /usr/local/bin)"
 	@echo "  uninstall        - Remove from \$$PREFIX/bin"
 	@echo "  install-info     - Show installation configuration"
@@ -177,4 +185,4 @@ help:
 	@echo "  make install PREFIX=\$$HOME/.local # Install to user directory"
 	@echo "  sudo make install PREFIX=/usr   # Install system-wide"
 
-.PHONY: all clean test check dev run-server run-watch install uninstall install-info help
+.PHONY: all clean test test-linux check dev run-server run-watch install uninstall install-info help

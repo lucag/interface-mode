@@ -114,6 +114,9 @@ make clean
 
 # Run tests
 make test
+
+# Run the Linux tests in Docker, from any host (macOS included)
+make test-linux
 ```
 
 **Note**: All executables are built in the `target/` directory to keep the project root clean.
