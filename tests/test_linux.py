@@ -88,6 +88,7 @@ class PortalTestCase(ContractAssertions, dbusmock.DBusTestCase):
             APPEARANCE, COLOR_SCHEME, dbus.UInt32(scheme, variant_level=1)
         )
 
+
 class QueryTest(PortalTestCase):
     def test_exit_status_states_the_mode(self):
         # No preference counts as Light.

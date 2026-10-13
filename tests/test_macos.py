@@ -1,9 +1,13 @@
 """Contract tests for interface-mode on macOS.
 
-The desktop's appearance can't be set without changing it for the user, so
-these check only what doesn't depend on the Interface Mode: option handling,
-output shapes, the exit status agreeing with the printed mode, and the
-Watcher's startup Report and clean stop.
+The Interface Mode can't be set without changing it for the user, so these
+check only what doesn't depend on it: option handling, output shapes, the
+exit status agreeing with the printed mode, and the Watcher's startup Report
+and clean stop.
+
+There is no macOS counterpart to the Linux test that stops the Watcher while
+it connects: nothing outside the process can hold it before its first read
+(Linux uses a session bus that never answers), so that path is unforced here.
 """
 
 import signal

@@ -6,12 +6,11 @@
  */
 
 #include "interface-mode.h"
+#include "stop.h"
 
-#include <errno.h>
 #include <fcntl.h>
 #include <gio/gio.h>
 #include <glib-unix.h>
-#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -131,30 +130,15 @@ static void on_setting_changed(GDBusConnection *bus, const char *sender,
 }
 
 /*
- * SIGINT and SIGTERM ask the Watcher to stop. Their handler only writes a
- * byte to this pipe, which the main loop watches. It stays installed for the
- * rest of the process, so a second request during shutdown (Ctrl+C reaching a
- * whole process group, then a parent asking again) is absorbed instead of
- * killing the Watcher on its way out, whichever thread it is delivered to.
- *
- * Connecting to the bus and the first read can block, and no loop is running
- * yet to see the pipe; there is nothing to undo either, and every Report so
- * far has been flushed. So while stop_ends_process is set, a stop request
- * ends the process at once, with the status a stopped Watcher exits with.
+ * Stop requests reach the main loop through this pipe: the shared handler
+ * (stop.h) writes a byte to it for each one, and the loop watches it.
  */
 static int stop_pipe[2] = {-1, -1};
-static volatile sig_atomic_t stop_ends_process;
 
-static void request_stop(int signum) {
-  (void)signum;
-  if (stop_ends_process) {
-    _exit(EXIT_SUCCESS);
-  }
-  int saved_errno = errno;
+static void write_stop_request(void) {
   /* A full pipe means a stop request is already pending. */
   ssize_t written = write(stop_pipe[1], "", 1);
   (void)written;
-  errno = saved_errno;
 }
 
 /* Consume the stop requests that have arrived so far. */
@@ -173,7 +157,7 @@ static void close_stop_pipe(void) {
   }
 }
 
-static bool catch_stop_requests(char **error) {
+static bool open_stop_pipe(char **error) {
   if (stop_pipe[0] != -1) {
     /* Requests that reached an earlier Watcher on their way out were its. */
     drain_stop_requests();
@@ -187,14 +171,7 @@ static bool catch_stop_requests(char **error) {
     close_stop_pipe();
     return false;
   }
-  struct sigaction action = {0};
-  action.sa_handler = request_stop;
-  action.sa_flags = SA_RESTART;
-  sigemptyset(&action.sa_mask);
-  if (sigaction(SIGINT, &action, NULL) != 0 ||
-      sigaction(SIGTERM, &action, NULL) != 0) {
-    *error = strdup(strerror(errno));
-    signal(SIGINT, SIG_DFL);
+  if (!catch_stop_requests(write_stop_request, error)) {
     close_stop_pipe();
     return false;
   }
@@ -223,13 +200,14 @@ static void on_portal_vanished(GDBusConnection *bus, const char *name,
 }
 
 bool platform_watch(ModeCallback observe, void *data, char **error) {
-  if (!catch_stop_requests(error)) {
+  if (!open_stop_pipe(error)) {
     return false;
   }
-  stop_ends_process = 1;
+  /* Connecting and the first read can block before the loop runs. */
+  set_stop_ends_process(true);
   GDBusConnection *bus = session_bus(error);
   if (bus == NULL) {
-    stop_ends_process = 0;
+    set_stop_ends_process(false);
     return false;
   }
   /* Set everything up before the first read, so neither a change nor a stop
@@ -246,7 +224,7 @@ bool platform_watch(ModeCallback observe, void *data, char **error) {
   Mode mode;
   bool ok = read_mode(bus, &mode, error);
   /* From here on the loop sees stop requests, or they are absorbed. */
-  stop_ends_process = 0;
+  set_stop_ends_process(false);
   if (ok) {
     observe(mode, data);
     /* Only now: the read may have just started the portal by activation. */

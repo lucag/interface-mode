@@ -11,7 +11,7 @@ Rules this repo holds code and commits to, beyond what the compiler and the test
   
   A test that sleeps a varying amount, or acts only `if` the process is still in some state, can pass without exercising anything.
 - **Every Linux change is checked with `make test-linux`.** It runs the suite in Docker, so it works on any host. Run it before committing.
-- **Every macOS change is checked with `make test` on a Mac.** A change to `cli.c`, `interface-mode.h` or `tests/contract.py` touches both platforms, so it gets both runs.
+- **Every macOS change is checked with `make test` on a Mac.** A change to `cli.c`, `stop.c`, either header or `tests/contract.py` touches both platforms, so it gets both runs.
 
 ## Signals
 

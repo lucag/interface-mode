@@ -119,7 +119,7 @@ On Linux, `make test` runs [`tests/test_linux.py`](tests/test_linux.py) with the
 
 `make test-linux` builds [`tests/Dockerfile`](tests/Dockerfile), a Debian image with every prerequisite, and runs `make test` inside it on a copy of the repo. It needs Docker running.
 
-On macOS, `make test` runs [`tests/test_macos.py`](tests/test_macos.py) with the system `python3`. The appearance can't be set without changing it for you, so it checks only the contract around it: options, output shapes, the exit status agreeing with `--text`, and the Watcher's startup Report and clean stop. Both suites share the platform-neutral checks in [`tests/contract.py`](tests/contract.py).
+On macOS, `make test` runs [`tests/test_macos.py`](tests/test_macos.py) with the system `python3`. The Interface Mode can't be set without changing it for you, so it checks only the contract around it: options, output shapes, the exit status agreeing with `--text`, and the Watcher's startup Report and clean stop. Both suites share the platform-neutral checks in [`tests/contract.py`](tests/contract.py).
 
 ## Breaking changes
 
@@ -142,6 +142,7 @@ The unified command changes the old macOS contract on purpose, all at once, so s
 interface-mode/
 ├── cli.c                     # the shared command-line contract: options, Reports, exit statuses
 ├── interface-mode.h          # the seam between the contract and a platform backend
+├── stop.c, stop.h            # SIGINT/SIGTERM handling every backend's Watcher shares
 ├── portal.c                  # Linux backend: the XDG Desktop Portal over GIO/GDBus
 ├── macos.m                   # macOS backend: AppKit's effective appearance
 ├── makefile                  # build, install and test, by platform

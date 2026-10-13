@@ -1,10 +1,8 @@
 # Compiler and flags
 CC = clang
-CFLAGS = -O2 -Wall -Wextra
+CFLAGS = -Wall -Wextra
 DEBUG_CFLAGS = -g -DDEBUG -O0
 RELEASE_CFLAGS = -O2 -DNDEBUG
-MACOS_CFLAGS = -mmacosx-version-min=10.14
-FRAMEWORKS = -framework AppKit -framework Foundation
 
 # Build output directory
 TARGET_DIR = target
@@ -16,51 +14,42 @@ PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 MANDIR = $(PREFIX)/share/man/man1
 
+PROGRAMS = interface-mode
+# Programs earlier versions installed: install and uninstall remove them.
+OBSOLETE_PROGRAMS = interface-mode-server
+
+# The command-line contract is shared; each platform adds a backend behind
+# interface-mode.h (docs/adr/0002) and its own test suite.
+SOURCES = cli.c stop.c
+HEADERS = interface-mode.h stop.h
+
 ifeq ($(UNAME),Darwin)
 
-PROGRAMS = interface-mode
-
-# Default target
-all: $(TARGET_DIR)/interface-mode
-
-# Convenience targets
-interface-mode: $(TARGET_DIR)/interface-mode
-debug: $(TARGET_DIR)/interface-mode-debug
-
-# macOS reads the Interface Mode through AppKit (docs/adr/0002).
-MACOS_SOURCES = cli.c macos.m
-MACOS_HEADERS = interface-mode.h
-
-# Release and debug builds differ only in their flags
-$(TARGET_DIR)/interface-mode: BUILD_CFLAGS = $(RELEASE_CFLAGS)
-$(TARGET_DIR)/interface-mode-debug: BUILD_CFLAGS = $(DEBUG_CFLAGS)
-$(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-debug: $(MACOS_SOURCES) $(MACOS_HEADERS) makefile | $(TARGET_DIR)
-	$(CC) $(CFLAGS) $(BUILD_CFLAGS) $(MACOS_CFLAGS) -fobjc-arc $(FRAMEWORKS) $(MACOS_SOURCES) -o $@
-
-# The appearance can't be set without changing it for the user, so these
-# test only the contract around it (tests/test_macos.py).
-test: $(TARGET_DIR)/interface-mode
-	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -p test_macos.py -v
-
-# Development
-dev: $(TARGET_DIR)/interface-mode-debug
-	@echo "Built debug version"
-
-run-watch: $(TARGET_DIR)/interface-mode
-	@echo "Starting interface-mode --watch..."
-	@$(TARGET_DIR)/interface-mode --watch
-
-define PLATFORM_HELP
-	@echo "  all              - Build interface-mode (default)"
-	@echo "  interface-mode   - Build interface-mode"
-	@echo "  debug            - Build a debug version"
-	@echo "  test             - Run the contract tests"
-	@echo "  run-watch        - Build and run interface-mode --watch"
-endef
+# macOS reads the Interface Mode through AppKit.
+SOURCES += macos.m
+PLATFORM_CFLAGS = -mmacosx-version-min=10.14 -fobjc-arc
+PLATFORM_LIBS = -framework AppKit -framework Foundation
+# The Interface Mode can't be set without changing it for the user, so this
+# tests only the contract around it.
+TEST_SUITE = test_macos.py
+TEST_HELP = Run the contract tests
 
 else
 
-PROGRAMS = interface-mode
+# Linux reads the desktop portal through GIO. Ask the system pkg-config for
+# it with its search path pinned, so a GLib from Linuxbrew or elsewhere on
+# PATH can't leak into the build.
+SOURCES += portal.c
+SYSTEM_PKG_CONFIG = /usr/bin/pkg-config
+SYSTEM_PC_PATH := $(shell $(SYSTEM_PKG_CONFIG) --variable pc_path pkg-config)
+PLATFORM_CFLAGS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --cflags gio-2.0)
+PLATFORM_LIBS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --libs gio-2.0)
+# Runs the binary against a fake desktop portal on a private session bus.
+# Needs python3-dbusmock.
+TEST_SUITE = test_linux.py
+TEST_HELP = Run the tests against a fake desktop portal
+
+endif
 
 # Default target
 all: $(TARGET_DIR)/interface-mode
@@ -69,27 +58,16 @@ all: $(TARGET_DIR)/interface-mode
 interface-mode: $(TARGET_DIR)/interface-mode
 debug: $(TARGET_DIR)/interface-mode-debug
 
-# Linux reads the desktop portal through GIO (docs/adr/0002). Ask the system
-# pkg-config for it with its search path pinned, so a GLib from Linuxbrew or
-# elsewhere on PATH can't leak into the build.
-SYSTEM_PKG_CONFIG = /usr/bin/pkg-config
-SYSTEM_PC_PATH := $(shell $(SYSTEM_PKG_CONFIG) --variable pc_path pkg-config)
-GIO_CFLAGS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --cflags gio-2.0)
-GIO_LIBS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --libs gio-2.0)
-LINUX_SOURCES = cli.c portal.c
-LINUX_HEADERS = interface-mode.h
-
 # Release and debug builds differ only in their flags
 $(TARGET_DIR)/interface-mode: BUILD_CFLAGS = $(RELEASE_CFLAGS)
 $(TARGET_DIR)/interface-mode-debug: BUILD_CFLAGS = $(DEBUG_CFLAGS)
-$(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-debug: $(LINUX_SOURCES) $(LINUX_HEADERS) makefile | $(TARGET_DIR)
-	$(CC) $(CFLAGS) $(BUILD_CFLAGS) $(GIO_CFLAGS) $(LINUX_SOURCES) $(GIO_LIBS) -o $@
+$(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-debug: $(SOURCES) $(HEADERS) makefile | $(TARGET_DIR)
+	$(CC) $(CFLAGS) $(BUILD_CFLAGS) $(PLATFORM_CFLAGS) $(SOURCES) $(PLATFORM_LIBS) -o $@
 
-# Runs the binary against a fake desktop portal on a private session bus.
-# Needs python3-dbusmock; the system python is used so the one it is
-# installed for is the one that runs.
+# The system python, so the one any test dependency is installed for is the
+# one that runs.
 test: $(TARGET_DIR)/interface-mode
-	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -p test_linux.py -v
+	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -p $(TEST_SUITE) -v
 
 # Development
 dev: $(TARGET_DIR)/interface-mode-debug
@@ -98,16 +76,6 @@ dev: $(TARGET_DIR)/interface-mode-debug
 run-watch: $(TARGET_DIR)/interface-mode
 	@echo "Starting interface-mode --watch..."
 	@$(TARGET_DIR)/interface-mode --watch
-
-define PLATFORM_HELP
-	@echo "  all              - Build interface-mode (default)"
-	@echo "  interface-mode   - Build interface-mode"
-	@echo "  debug            - Build a debug version"
-	@echo "  test             - Run the tests against a fake desktop portal"
-	@echo "  run-watch        - Build and run interface-mode --watch"
-endef
-
-endif
 
 # Create target directory
 $(TARGET_DIR):
@@ -133,12 +101,13 @@ install: $(addprefix $(TARGET_DIR)/,$(PROGRAMS))
 	mkdir -p $(BINDIR)
 	cp $^ $(BINDIR)/
 	chmod +x $(addprefix $(BINDIR)/,$(PROGRAMS))
+	rm -f $(addprefix $(BINDIR)/,$(OBSOLETE_PROGRAMS))
 	@echo "Installed $(PROGRAMS) to $(BINDIR)"
 
 # Uninstall from the same PREFIX
 uninstall:
 	@echo "Uninstalling from $(PREFIX)..."
-	rm -f $(addprefix $(BINDIR)/,$(PROGRAMS))
+	rm -f $(addprefix $(BINDIR)/,$(PROGRAMS) $(OBSOLETE_PROGRAMS))
 	@echo "Removed $(PROGRAMS) from $(BINDIR)"
 
 # Show installation info
@@ -156,7 +125,11 @@ install-info:
 # Help
 help:
 	@echo "Available targets:"
-	$(PLATFORM_HELP)
+	@echo "  all              - Build interface-mode (default)"
+	@echo "  interface-mode   - Build interface-mode"
+	@echo "  debug            - Build a debug version"
+	@echo "  test             - $(TEST_HELP)"
+	@echo "  run-watch        - Build and run interface-mode --watch"
 	@echo "  clean            - Remove built executables"
 	@echo "  check            - Clean, build and test"
 	@echo "  test-linux       - Run the Linux tests in Docker, from any host"

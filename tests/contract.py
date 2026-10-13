@@ -18,6 +18,22 @@ BINARY = os.environ.get(
     os.path.join(os.path.dirname(__file__), "..", "target", "interface-mode"),
 )
 
+# The usage every platform prints, word for word.
+USAGE = """\
+Usage: interface-mode [ -t | --text | -j | --json ] [ -w | --watch ]
+
+Query the desktop's Interface Mode (light or dark), or watch it.
+
+  -t, --text     print "light" or "dark" (-v, --verbose: same)
+  -j, --json     print {"timestamp":...,"mode":"light|dark"}
+  -w, --watch    keep running: report the mode now and on every
+                 change, one line each (JSON unless --text)
+  -h, --help     show this help
+
+Exit status: 0 light, 1 dark, 2 error (bad option, or the mode
+can't be determined). With --watch: 0 when stopped by a signal.
+"""
+
 TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
 
 
@@ -102,14 +118,13 @@ class ContractAssertions:
 class UsageContract(ContractAssertions):
     """Option handling that answers before the Interface Mode is read."""
 
-    def test_help_describes_the_contract(self):
+    def test_help_prints_the_shared_usage(self):
         for flag in ("-h", "--help"):
             with self.subTest(flag=flag):
                 result = self.run_tool(flag)
-                self.assertEqual(result.returncode, 0)
-                self.assertEqual(result.stderr, "")
-                for word in ("--text", "--json", "--watch", "0", "1", "2"):
-                    self.assertIn(word, result.stdout)
+                self.assertEqual(
+                    (result.returncode, result.stdout, result.stderr), (0, USAGE, "")
+                )
 
     def test_unknown_option_is_an_error(self):
         self.assertUsageError("--bogus")
