@@ -9,10 +9,14 @@ FRAMEWORKS = -framework AppKit -framework Foundation
 # Build output directory
 TARGET_DIR = target
 
+UNAME := $(shell uname -s)
+
 # Installation paths (customizable)
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 MANDIR = $(PREFIX)/share/man/man1
+
+ifeq ($(UNAME),Darwin)
 
 # Default target
 all: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
@@ -41,11 +45,43 @@ $(TARGET_DIR)/interface-mode-debug: interface-mode.m makefile | $(TARGET_DIR)
 $(TARGET_DIR)/interface-mode-server-debug: interface-mode-server.m makefile | $(TARGET_DIR)
 	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(DEBUG_CFLAGS) $< -o $@
 
+else
+
+# Default target
+all: $(TARGET_DIR)/interface-mode
+
+# Convenience targets
+interface-mode: $(TARGET_DIR)/interface-mode
+debug: $(TARGET_DIR)/interface-mode-debug
+
+# Create target directory
+$(TARGET_DIR):
+	mkdir -p $(TARGET_DIR)
+
+# Linux reads the desktop portal through GIO (docs/adr/0002). Ask the system
+# pkg-config for it with its search path pinned, so a GLib from Linuxbrew or
+# elsewhere on PATH can't leak into the build.
+SYSTEM_PKG_CONFIG = /usr/bin/pkg-config
+SYSTEM_PC_PATH := $(shell $(SYSTEM_PKG_CONFIG) --variable pc_path pkg-config)
+GIO_CFLAGS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --cflags gio-2.0)
+GIO_LIBS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --libs gio-2.0)
+LINUX_SOURCES = cli.c portal.c
+LINUX_HEADERS = interface-mode.h
+
+$(TARGET_DIR)/interface-mode: $(LINUX_SOURCES) $(LINUX_HEADERS) makefile | $(TARGET_DIR)
+	$(CC) $(CFLAGS) $(RELEASE_CFLAGS) $(GIO_CFLAGS) $(LINUX_SOURCES) $(GIO_LIBS) -o $@
+
+$(TARGET_DIR)/interface-mode-debug: $(LINUX_SOURCES) $(LINUX_HEADERS) makefile | $(TARGET_DIR)
+	$(CC) $(CFLAGS) $(DEBUG_CFLAGS) $(GIO_CFLAGS) $(LINUX_SOURCES) $(GIO_LIBS) -o $@
+
+endif
+
 # Clean
 clean:
 	rm -rf $(TARGET_DIR)
 
 # Test
+ifeq ($(UNAME),Darwin)
 test: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
 	@echo "Testing interface-mode..."
 	@$(TARGET_DIR)/interface-mode -h
@@ -54,6 +90,13 @@ test: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
 	@! $(TARGET_DIR)/interface-mode --invalid-option 2>/dev/null
 	@echo "Testing interface-mode-server..."
 	@$(TARGET_DIR)/interface-mode-server --help || true
+else
+# Runs the binary against a fake desktop portal on a private session bus.
+# Needs python3-dbusmock; the system python is used so the one it is
+# installed for is the one that runs.
+test: $(TARGET_DIR)/interface-mode
+	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -v
+endif
 
 # Quick check
 check: clean all test
