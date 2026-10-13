@@ -4,8 +4,6 @@ Each test class runs on a private session bus with a fake XDG Desktop Portal,
 so the real desktop is never read or changed.
 """
 
-import datetime
-import json
 import os
 import re
 import selectors
@@ -20,10 +18,8 @@ import unittest
 import dbus
 import dbusmock
 
-BINARY = os.environ.get(
-    "INTERFACE_MODE",
-    os.path.join(os.path.dirname(__file__), "..", "target", "interface-mode"),
-)
+from contract import BINARY, ContractAssertions, UsageContract, keep_asking_to_stop
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), "..", "example", "on-interface-mode-change.py"
 )
@@ -43,25 +39,8 @@ SCHEMES = [
     (NO_PREFERENCE, "light", 0),
 ]
 
-TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
 
-
-def keep_asking_to_stop(process, timeout=5):
-    """Send SIGTERM to `process` until it has exited, then reap it.
-
-    Requests land all through its shutdown, right up to the end. WNOWAIT
-    leaves it unreaped while it is being signalled, so its pid can't be reused.
-    Returns the exit status.
-    """
-    deadline = time.monotonic() + timeout
-    while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-        if time.monotonic() > deadline:
-            raise AssertionError("still running after %ss of stop requests" % timeout)
-        os.kill(process.pid, signal.SIGTERM)
-    return process.wait()
-
-
-class PortalTestCase(dbusmock.DBusTestCase):
+class PortalTestCase(ContractAssertions, dbusmock.DBusTestCase):
     @classmethod
     def setUpClass(cls):
         cls.start_session_bus()
@@ -97,16 +76,6 @@ class PortalTestCase(dbusmock.DBusTestCase):
             "else None" % (scheme, level, APPEARANCE, COLOR_SCHEME),
         )
 
-    def assertJsonReport(self, line, mode):
-        """`line` is one JSON object stating `mode`, stamped about now in UTC."""
-        report = json.loads(line)
-        self.assertEqual(sorted(report), ["mode", "timestamp"])
-        self.assertEqual(report["mode"], mode)
-        self.assertRegex(report["timestamp"], TIMESTAMP)
-        stamped = datetime.datetime.fromisoformat(report["timestamp"])
-        now = datetime.datetime.now(datetime.timezone.utc)
-        self.assertLess(abs((now - stamped).total_seconds()), 60)
-
     def emit_setting(self, namespace, key, value):
         self.mock.EmitSignal(
             SETTINGS, "SettingChanged", "ssv", [namespace, key, value]
@@ -118,18 +87,6 @@ class PortalTestCase(dbusmock.DBusTestCase):
         self.emit_setting(
             APPEARANCE, COLOR_SCHEME, dbus.UInt32(scheme, variant_level=1)
         )
-
-    def assertError(self, result, message="interface-mode:"):
-        """`result` failed with exit 2, nothing on stdout, `message` on stderr."""
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn(message, result.stderr)
-
-    def run_tool(self, *args, env=None):
-        return subprocess.run(
-            [BINARY, *args], capture_output=True, text=True, timeout=10, env=env
-        )
-
 
 class QueryTest(PortalTestCase):
     def test_exit_status_states_the_mode(self):
@@ -190,69 +147,14 @@ class QueryFormatTest(PortalTestCase):
                 self.assertError(self.run_tool(flag))
 
 
-class OptionsTest(PortalTestCase):
-    def test_help_describes_the_contract(self):
-        for flag in ("-h", "--help"):
-            with self.subTest(flag=flag):
-                result = self.run_tool(flag)
-                self.assertEqual(result.returncode, 0)
-                self.assertEqual(result.stderr, "")
-                for word in ("--text", "--json", "--watch", "0", "1", "2"):
-                    self.assertIn(word, result.stdout)
-
-    def assertUsageError(self, *args):
-        self.assertError(self.run_tool(*args), "Usage:")
-
-    def test_unknown_option_is_an_error(self):
-        self.start_portal(PREFER_LIGHT)
-        self.assertUsageError("--bogus")
-
-    def test_text_and_json_together_is_an_error(self):
-        self.start_portal(PREFER_LIGHT)
-        self.assertUsageError("--text", "--json")
-        self.assertUsageError("-j", "-v")
-        self.assertUsageError("--watch", "--text", "--json")
-
+class OptionsTest(UsageContract, PortalTestCase):
     def test_repeating_a_format_is_fine(self):
         self.start_portal(PREFER_LIGHT)
         result = self.run_tool("-t", "--verbose")
         self.assertEqual((result.returncode, result.stdout), (0, "light\n"))
 
 
-class Watcher:
-    """A running `interface-mode --watch`, read one Report at a time."""
-
-    def __init__(self, *args, flag="--watch", env=None):
-        self.process = subprocess.Popen(
-            [BINARY, flag, *args],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-        self.selector = selectors.DefaultSelector()
-        self.selector.register(self.process.stdout, selectors.EVENT_READ)
-
-    def next_line(self, timeout=5):
-        """The next line, or None if nothing arrives within `timeout`."""
-        if not self.selector.select(timeout):
-            return None
-        return self.process.stdout.readline()
-
-    def stop(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait()
-        self.process.stdout.close()
-        self.process.stderr.close()
-
-
 class WatcherTest(PortalTestCase):
-    def watch(self, *args, flag="--watch", env=None):
-        watcher = Watcher(*args, flag=flag, env=env)
-        self.addCleanup(watcher.stop)
-        return watcher
-
     def test_reports_the_mode_on_startup(self):
         self.start_portal(PREFER_DARK)
         watcher = self.watch()

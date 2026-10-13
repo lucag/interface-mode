@@ -18,56 +18,44 @@ MANDIR = $(PREFIX)/share/man/man1
 
 ifeq ($(UNAME),Darwin)
 
-PROGRAMS = interface-mode interface-mode-server
+PROGRAMS = interface-mode
 
 # Default target
-all: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
+all: $(TARGET_DIR)/interface-mode
 
 # Convenience targets
 interface-mode: $(TARGET_DIR)/interface-mode
-interface-mode-server: $(TARGET_DIR)/interface-mode-server
-debug: $(TARGET_DIR)/interface-mode-debug $(TARGET_DIR)/interface-mode-server-debug
+debug: $(TARGET_DIR)/interface-mode-debug
 
-# Original program (enhanced)
-$(TARGET_DIR)/interface-mode: interface-mode.m makefile | $(TARGET_DIR)
-	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(RELEASE_CFLAGS) $< -o $@
+# macOS reads the Interface Mode through AppKit (docs/adr/0002).
+MACOS_SOURCES = cli.c macos.m
+MACOS_HEADERS = interface-mode.h
 
-# New server program
-$(TARGET_DIR)/interface-mode-server: interface-mode-server.m makefile | $(TARGET_DIR)
-	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(RELEASE_CFLAGS) $< -o $@
+# Release and debug builds differ only in their flags
+$(TARGET_DIR)/interface-mode: BUILD_CFLAGS = $(RELEASE_CFLAGS)
+$(TARGET_DIR)/interface-mode-debug: BUILD_CFLAGS = $(DEBUG_CFLAGS)
+$(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-debug: $(MACOS_SOURCES) $(MACOS_HEADERS) makefile | $(TARGET_DIR)
+	$(CC) $(CFLAGS) $(BUILD_CFLAGS) $(MACOS_CFLAGS) -fobjc-arc $(FRAMEWORKS) $(MACOS_SOURCES) -o $@
 
-# Debug versions
-$(TARGET_DIR)/interface-mode-debug: interface-mode.m makefile | $(TARGET_DIR)
-	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(DEBUG_CFLAGS) $< -o $@
-
-$(TARGET_DIR)/interface-mode-server-debug: interface-mode-server.m makefile | $(TARGET_DIR)
-	$(CC) $(MACOS_CFLAGS) $(FRAMEWORKS) $(DEBUG_CFLAGS) $< -o $@
-
-# Test
-test: $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-server
-	@echo "Testing interface-mode..."
-	@$(TARGET_DIR)/interface-mode -h
-	@$(TARGET_DIR)/interface-mode --help
-	@$(TARGET_DIR)/interface-mode --verbose
-	@! $(TARGET_DIR)/interface-mode --invalid-option 2>/dev/null
-	@echo "Testing interface-mode-server..."
-	@$(TARGET_DIR)/interface-mode-server --help || true
+# The appearance can't be set without changing it for the user, so these
+# test only the contract around it (tests/test_macos.py).
+test: $(TARGET_DIR)/interface-mode
+	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -p test_macos.py -v
 
 # Development
-dev: $(TARGET_DIR)/interface-mode-server-debug
-	@echo "Built debug version of server"
+dev: $(TARGET_DIR)/interface-mode-debug
+	@echo "Built debug version"
 
-run-server: $(TARGET_DIR)/interface-mode-server
-	@echo "Starting interface-mode-server..."
-	@$(TARGET_DIR)/interface-mode-server
+run-watch: $(TARGET_DIR)/interface-mode
+	@echo "Starting interface-mode --watch..."
+	@$(TARGET_DIR)/interface-mode --watch
 
 define PLATFORM_HELP
-	@echo "  all              - Build both programs (default)"
-	@echo "  interface-mode   - Build original program"
-	@echo "  interface-mode-server - Build server program"
-	@echo "  debug            - Build debug versions"
-	@echo "  test             - Run basic tests"
-	@echo "  run-server       - Build and run server"
+	@echo "  all              - Build interface-mode (default)"
+	@echo "  interface-mode   - Build interface-mode"
+	@echo "  debug            - Build a debug version"
+	@echo "  test             - Run the contract tests"
+	@echo "  run-watch        - Build and run interface-mode --watch"
 endef
 
 else
@@ -101,7 +89,7 @@ $(TARGET_DIR)/interface-mode $(TARGET_DIR)/interface-mode-debug: $(LINUX_SOURCES
 # Needs python3-dbusmock; the system python is used so the one it is
 # installed for is the one that runs.
 test: $(TARGET_DIR)/interface-mode
-	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -v
+	INTERFACE_MODE=$(CURDIR)/$(TARGET_DIR)/interface-mode /usr/bin/python3 -m unittest discover -s tests -p test_linux.py -v
 
 # Development
 dev: $(TARGET_DIR)/interface-mode-debug
@@ -185,4 +173,4 @@ help:
 	@echo "  make install PREFIX=\$$HOME/.local # Install to user directory"
 	@echo "  sudo make install PREFIX=/usr   # Install system-wide"
 
-.PHONY: all clean test test-linux check dev run-server run-watch install uninstall install-info help
+.PHONY: all clean test test-linux check dev run-watch install uninstall install-info help

@@ -5,7 +5,7 @@ SIGINT and SIGTERM stop the Watcher with exit status 0 at every point in its lif
 ## Consequences
 
 - Stop handlers are installed before anything that can block and stay installed until the process exits. Shutdown never restores the default action.
-- A handler does async-signal-safe work only: a write to a self-pipe the main loop watches, or `_exit` before the loop is up. On macOS a dispatch signal source, with the signal set to ignored, does the same.
+- A handler does async-signal-safe work only: a write to a self-pipe the main loop watches, or `_exit` before the loop is up. On macOS the handler only `_exit`s before the run loop is up, and dispatch signal sources on the main queue stop the run loop.
 - Anything that runs the Watcher keeps the rule: the Python example ignores stop requests once its Watcher has exited, because Python resets its own handlers on the way out.
 - Before `main` reaches the stop setup, a signal still gets the default action; code can't close that.
-- The rule is part of the contract in `interface-mode.h`, so the macOS backend (#5) must meet it too.
+- The rule is part of the contract in `interface-mode.h`, so every backend meets it, macOS included.
