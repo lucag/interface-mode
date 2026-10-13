@@ -28,6 +28,7 @@ ifeq ($(UNAME),Darwin)
 # macOS reads the Interface Mode through AppKit, so it builds with Apple's
 # compiler, whatever clang comes first on PATH.
 CC = xcrun clang
+COMPILER = $(shell xcrun --find clang) -isysroot $(shell xcrun --show-sdk-path)
 SOURCES += macos.m
 PLATFORM_CFLAGS = -mmacosx-version-min=10.14 -fobjc-arc
 PLATFORM_LIBS = -framework AppKit -framework Foundation
@@ -42,6 +43,7 @@ else
 # it with its search path pinned, so a GLib from Linuxbrew or elsewhere on
 # PATH can't leak into the build.
 SOURCES += portal.c
+COMPILER = $(shell command -v $(CC))
 SYSTEM_PKG_CONFIG = /usr/bin/pkg-config
 SYSTEM_PC_PATH := $(shell $(SYSTEM_PKG_CONFIG) --variable pc_path pkg-config)
 PLATFORM_CFLAGS := $(shell PKG_CONFIG_LIBDIR=$(SYSTEM_PC_PATH) $(SYSTEM_PKG_CONFIG) --cflags gio-2.0)
@@ -82,6 +84,15 @@ run-watch: $(TARGET_DIR)/interface-mode
 # Create target directory
 $(TARGET_DIR):
 	mkdir -p $(TARGET_DIR)
+
+# How each source is compiled on this platform, for clangd and other tools.
+# Written from the build's own sources and flags, so it can't drift from them.
+compile_commands.json:
+	@{ echo '['; sep=; for f in $(SOURCES); do \
+	  printf '%s  {"directory": "%s", "file": "%s", "command": "%s"}\n' "$$sep" \
+	    "$(CURDIR)" "$$f" "$(COMPILER) $(CFLAGS) $(RELEASE_CFLAGS) $(PLATFORM_CFLAGS) -c $$f"; \
+	  sep=,; done; echo ']'; } > $@
+	@echo "Wrote $@"
 
 # Use the tracked git hooks (.githooks): commit messages must name an issue.
 hooks:
@@ -140,6 +151,7 @@ help:
 	@echo "  clean            - Remove built executables"
 	@echo "  check            - Clean, build and test"
 	@echo "  test-linux       - Run the Linux tests in Docker, from any host"
+	@echo "  compile_commands.json - Write the compilation database for clangd"
 	@echo "  hooks            - Use the repo's git hooks (commit messages name an issue)"
 	@echo "  install          - Install to \$$PREFIX/bin (default: /usr/local/bin)"
 	@echo "  uninstall        - Remove from \$$PREFIX/bin"
@@ -154,4 +166,4 @@ help:
 	@echo "  make install PREFIX=\$$HOME/.local # Install to user directory"
 	@echo "  sudo make install PREFIX=/usr   # Install system-wide"
 
-.PHONY: all clean test test-linux hooks check dev run-watch install uninstall install-info help
+.PHONY: all clean test test-linux hooks compile_commands.json check dev run-watch install uninstall install-info help
