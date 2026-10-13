@@ -7,8 +7,6 @@ Report, and watch for changes to, the desktop's **Interface Mode**: the desktop-
 
 A platform's "no preference" setting counts as **Light**.
 
-> **macOS status:** the unified command described here is implemented on Linux. macOS still ships the previous tools, `interface-mode` and `interface-mode-server`, with their old behaviour (see [Breaking changes](#breaking-changes)) until the macOS port ([#5](https://github.com/lucag/interface-mode/issues/5)) lands.
-
 ## Usage
 
 ```
@@ -93,12 +91,7 @@ A GLib from Linuxbrew (or anywhere else on `PATH`) is a trap on Linux desktops. 
 
 ## macOS
 
-Until [#5](https://github.com/lucag/interface-mode/issues/5) lands, macOS builds the previous tools, which read `NSApplication.effectiveAppearance` through AppKit:
-
-- `interface-mode [-v]`: exits 0 in Light and 255 in Dark; `-v` prints `Light` or `Dark`.
-- `interface-mode-server [--json | --simple]`: the old long-running form, with a `change` field in its JSON.
-
-Building needs the Xcode Command Line Tools.
+The Interface Mode is read from AppKit: an `NSApplication.effectiveAppearance` whose name contains "dark" is Dark, anything else is Light. The Watcher observes that appearance for changes. Building needs the Xcode Command Line Tools.
 
 ## Building and installing
 
@@ -126,7 +119,7 @@ On Linux, `make test` runs [`tests/test_linux.py`](tests/test_linux.py) with the
 
 `make test-linux` builds [`tests/Dockerfile`](tests/Dockerfile), a Debian image with every prerequisite, and runs `make test` inside it on a copy of the repo. It needs Docker running.
 
-On macOS, `make test` runs the old tools' smoke checks until #5 lands.
+On macOS, `make test` runs [`tests/test_macos.py`](tests/test_macos.py) with the system `python3`. The appearance can't be set without changing it for you, so it checks only the contract around it: options, output shapes, the exit status agreeing with `--text`, and the Watcher's startup Report and clean stop. Both suites share the platform-neutral checks in [`tests/contract.py`](tests/contract.py).
 
 ## Breaking changes
 
@@ -150,12 +143,13 @@ interface-mode/
 ├── cli.c                     # the shared command-line contract: options, Reports, exit statuses
 ├── interface-mode.h          # the seam between the contract and a platform backend
 ├── portal.c                  # Linux backend: the XDG Desktop Portal over GIO/GDBus
-├── interface-mode.m          # macOS: previous Query tool (until #5)
-├── interface-mode-server.m   # macOS: previous long-running tool (until #5)
+├── macos.m                   # macOS backend: AppKit's effective appearance
 ├── makefile                  # build, install and test, by platform
 ├── example/                  # hook scripts and a systemd user unit
 ├── tests/
+│   ├── contract.py           # checks every platform shares
 │   ├── test_linux.py         # black-box tests against a fake portal
+│   ├── test_macos.py         # contract-only tests on macOS
 │   └── Dockerfile            # Linux test environment for make test-linux
 ├── docs/
 │   ├── adr/                  # architecture decision records
