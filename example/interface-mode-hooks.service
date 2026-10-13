@@ -9,6 +9,9 @@
 #   systemctl --user enable --now interface-mode-hooks.service
 #
 # Then watch it with: journalctl --user -fu interface-mode-hooks
+#
+# To run the Python version instead, install on-interface-mode-change.py the
+# same way and point ExecStart at it.
 
 [Unit]
 Description=Run hooks when the desktop's Interface Mode changes
