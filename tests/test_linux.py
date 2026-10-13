@@ -24,9 +24,17 @@ BINARY = os.environ.get(
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
 SETTINGS = "org.freedesktop.portal.Settings"
+APPEARANCE = "org.freedesktop.appearance"
+COLOR_SCHEME = "color-scheme"
 
 NO_PREFERENCE, PREFER_DARK, PREFER_LIGHT = 0, 1, 2
 
+# Each portal color-scheme, with the mode and Query exit status it stands for.
+SCHEMES = [
+    (PREFER_DARK, "dark", 1),
+    (PREFER_LIGHT, "light", 0),
+    (NO_PREFERENCE, "light", 0),
+]
 
 TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
 
@@ -63,8 +71,8 @@ class PortalTestCase(dbusmock.DBusTestCase):
             "ss",
             "v",
             "ret = dbus.UInt32(%d, variant_level=%d) "
-            "if (args[0], args[1]) == ('org.freedesktop.appearance', 'color-scheme') "
-            "else None" % (scheme, level),
+            "if (args[0], args[1]) == (%r, %r) "
+            "else None" % (scheme, level, APPEARANCE, COLOR_SCHEME),
         )
 
     def assertJsonReport(self, line, mode):
@@ -86,10 +94,14 @@ class PortalTestCase(dbusmock.DBusTestCase):
         """Switch the fake portal to `scheme` and announce it as a portal does."""
         self.set_scheme(scheme)
         self.emit_setting(
-            "org.freedesktop.appearance",
-            "color-scheme",
-            dbus.UInt32(scheme, variant_level=1),
+            APPEARANCE, COLOR_SCHEME, dbus.UInt32(scheme, variant_level=1)
         )
+
+    def assertError(self, result, message="interface-mode:"):
+        """`result` failed with exit 2, nothing on stdout, `message` on stderr."""
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(message, result.stderr)
 
     def run_tool(self, *args, env=None):
         return subprocess.run(
@@ -98,46 +110,38 @@ class PortalTestCase(dbusmock.DBusTestCase):
 
 
 class QueryTest(PortalTestCase):
-    def test_dark_exits_1(self):
-        self.start_portal(PREFER_DARK)
-        self.assertEqual(self.run_tool().returncode, 1)
-
-    def test_light_exits_0(self):
-        self.start_portal(PREFER_LIGHT)
-        self.assertEqual(self.run_tool().returncode, 0)
-
-    def test_no_preference_counts_as_light(self):
-        self.start_portal(NO_PREFERENCE)
-        self.assertEqual(self.run_tool().returncode, 0)
+    def test_exit_status_states_the_mode(self):
+        # No preference counts as Light.
+        for scheme, mode, status in SCHEMES:
+            with self.subTest(mode=mode, scheme=scheme):
+                self.start_portal(scheme)
+                result = self.run_tool()
+                self.assertEqual((result.returncode, result.stdout), (status, ""))
+                self.stop_portal()
 
     def test_reads_portals_without_read_one(self):
-        self.start_portal(PREFER_DARK, read_one=False)
-        self.assertEqual(self.run_tool().returncode, 1)
+        for scheme, mode, status in SCHEMES:
+            with self.subTest(mode=mode, scheme=scheme):
+                self.start_portal(scheme, read_one=False)
+                self.assertEqual(self.run_tool().returncode, status)
+                self.stop_portal()
 
     def test_no_portal_is_an_error(self):
-        result = self.run_tool()
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("interface-mode:", result.stderr)
+        self.assertError(self.run_tool())
 
     def test_no_session_bus_is_an_error(self):
         env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
-        result = self.run_tool(env=env)
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("interface-mode:", result.stderr)
+        self.assertError(self.run_tool(env=env))
 
 
 class QueryFormatTest(PortalTestCase):
     def test_text_prints_the_mode(self):
-        self.start_portal(PREFER_DARK)
-        result = self.run_tool("--text")
-        self.assertEqual((result.returncode, result.stdout), (1, "dark\n"))
-
-    def test_text_prints_light(self):
-        self.start_portal(PREFER_LIGHT)
-        result = self.run_tool("--text")
-        self.assertEqual((result.returncode, result.stdout), (0, "light\n"))
+        for scheme, mode, status in SCHEMES:
+            with self.subTest(mode=mode, scheme=scheme):
+                self.start_portal(scheme)
+                result = self.run_tool("--text")
+                self.assertEqual((result.returncode, result.stdout), (status, mode + "\n"))
+                self.stop_portal()
 
     def test_text_aliases(self):
         self.start_portal(PREFER_DARK)
@@ -147,20 +151,21 @@ class QueryFormatTest(PortalTestCase):
                 self.assertEqual((result.returncode, result.stdout), (1, "dark\n"))
 
     def test_json_prints_one_report(self):
-        self.start_portal(PREFER_DARK)
-        for flag in ("--json", "-j"):
-            with self.subTest(flag=flag):
-                result = self.run_tool(flag)
-                self.assertEqual(result.returncode, 1)
-                self.assertTrue(result.stdout.endswith("\n"))
-                self.assertEqual(len(result.stdout.splitlines()), 1)
-                self.assertJsonReport(result.stdout, "dark")
+        for scheme, mode, status in SCHEMES:
+            self.start_portal(scheme)
+            for flag in ("--json", "-j"):
+                with self.subTest(mode=mode, scheme=scheme, flag=flag):
+                    result = self.run_tool(flag)
+                    self.assertEqual(result.returncode, status)
+                    self.assertTrue(result.stdout.endswith("\n"))
+                    self.assertEqual(len(result.stdout.splitlines()), 1)
+                    self.assertJsonReport(result.stdout, mode)
+            self.stop_portal()
 
     def test_no_output_when_the_mode_is_unknown(self):
         for flag in ("--text", "--json"):
             with self.subTest(flag=flag):
-                result = self.run_tool(flag)
-                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertError(self.run_tool(flag))
 
 
 class OptionsTest(PortalTestCase):
@@ -174,10 +179,7 @@ class OptionsTest(PortalTestCase):
                     self.assertIn(word, result.stdout)
 
     def assertUsageError(self, *args):
-        result = self.run_tool(*args)
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("Usage:", result.stderr)
+        self.assertError(self.run_tool(*args), "Usage:")
 
     def test_unknown_option_is_an_error(self):
         self.start_portal(PREFER_LIGHT)
@@ -187,6 +189,7 @@ class OptionsTest(PortalTestCase):
         self.start_portal(PREFER_LIGHT)
         self.assertUsageError("--text", "--json")
         self.assertUsageError("-j", "-v")
+        self.assertUsageError("--watch", "--text", "--json")
 
     def test_repeating_a_format_is_fine(self):
         self.start_portal(PREFER_LIGHT)
@@ -197,9 +200,9 @@ class OptionsTest(PortalTestCase):
 class Watcher:
     """A running `interface-mode --watch`, read one Report at a time."""
 
-    def __init__(self, *args):
+    def __init__(self, *args, flag="--watch"):
         self.process = subprocess.Popen(
-            [BINARY, "--watch", *args],
+            [BINARY, flag, *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -222,8 +225,8 @@ class Watcher:
 
 
 class WatcherTest(PortalTestCase):
-    def watch(self, *args):
-        watcher = Watcher(*args)
+    def watch(self, *args, flag="--watch"):
+        watcher = Watcher(*args, flag=flag)
         self.addCleanup(watcher.stop)
         return watcher
 
@@ -232,6 +235,17 @@ class WatcherTest(PortalTestCase):
         watcher = self.watch()
         self.assertJsonReport(watcher.next_line(), "dark")
         self.assertIsNone(watcher.process.poll(), "the Watcher keeps running")
+
+    def test_short_flag_and_explicit_json(self):
+        self.start_portal(PREFER_LIGHT)
+        for flag, args in (("-w", ()), ("--watch", ("--json",)), ("-w", ("-j",))):
+            with self.subTest(flag=flag, args=args):
+                watcher = self.watch(*args, flag=flag)
+                self.assertJsonReport(watcher.next_line(), "light")
+                self.change_scheme(PREFER_DARK)
+                self.assertJsonReport(watcher.next_line(), "dark")
+                self.change_scheme(PREFER_LIGHT)
+                self.assertJsonReport(watcher.next_line(), "light")
 
     def test_reports_each_change(self):
         self.start_portal(PREFER_DARK)
@@ -249,13 +263,13 @@ class WatcherTest(PortalTestCase):
 
         self.change_scheme(PREFER_DARK)  # duplicate signal, same mode
         self.emit_setting(
-            "org.freedesktop.appearance",
+            APPEARANCE,
             "accent-color",
             dbus.Struct((0.1, 0.2, 0.3), signature="ddd", variant_level=1),
         )
         self.emit_setting(
             "org.gnome.desktop.interface",
-            "color-scheme",
+            COLOR_SCHEME,
             dbus.String("prefer-light", variant_level=1),
         )
         self.change_scheme(PREFER_LIGHT)
@@ -291,6 +305,18 @@ class WatcherTest(PortalTestCase):
         watcher = self.watch()
         self.assertEqual(watcher.process.wait(timeout=5), 2)
         self.assertEqual(watcher.process.stdout.read(), "")
+
+
+class BuildTest(unittest.TestCase):
+    def test_links_the_system_glib(self):
+        # A GLib from Linuxbrew (or anywhere else on PATH) must not leak in.
+        libraries = subprocess.run(
+            ["ldd", BINARY], capture_output=True, text=True, check=True
+        ).stdout
+        glib = re.findall(r"lib(?:gio|gobject|glib)-2\.0\.so\S* => (\S+)", libraries)
+        self.assertEqual(len(glib), 3, libraries)
+        for path in glib:
+            self.assertRegex(path, r"^(/usr)?/lib", path)
 
 
 if __name__ == "__main__":

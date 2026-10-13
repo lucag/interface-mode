@@ -11,7 +11,9 @@
 #include <string.h>
 #include <time.h>
 
-enum { EXIT_LIGHT = 0, EXIT_DARK = 1, EXIT_ERROR = 2 };
+/* A Query's exit status states the Interface Mode; anything else that
+ * succeeds (help, a Watcher stopped by a signal) exits with EXIT_SUCCESS. */
+enum { EXIT_LIGHT = EXIT_SUCCESS, EXIT_DARK = 1, EXIT_ERROR = 2 };
 
 typedef enum { FORMAT_NONE, FORMAT_TEXT, FORMAT_JSON } Format;
 
@@ -20,8 +22,8 @@ static bool is_option(const char *arg, const char *short_name,
   return strcmp(arg, short_name) == 0 || strcmp(arg, long_name) == 0;
 }
 
-/* Report a failure from the platform backend and return the exit status. */
-static int platform_error(char *error) {
+/* Print and free a backend's error message; return the error exit status. */
+static int report_failure(char *error) {
   fprintf(stderr, "interface-mode: %s\n", error);
   free(error);
   return EXIT_ERROR;
@@ -95,7 +97,7 @@ static int watch(Format format) {
                        MODE_LIGHT};
   char *error = NULL;
   if (!platform_watch(report_if_changed, &reporter, &error)) {
-    return platform_error(error);
+    return report_failure(error);
   }
   return EXIT_SUCCESS;
 }
@@ -132,7 +134,7 @@ int main(int argc, char **argv) {
   Mode mode;
   char *error = NULL;
   if (!platform_read_mode(&mode, &error)) {
-    return platform_error(error);
+    return report_failure(error);
   }
   print_report(format, mode);
   return mode == MODE_DARK ? EXIT_DARK : EXIT_LIGHT;
