@@ -10,7 +10,10 @@ import os
 import re
 import selectors
 import signal
+import socket
 import subprocess
+import sys
+import tempfile
 import time
 import unittest
 
@@ -20,6 +23,9 @@ import dbusmock
 BINARY = os.environ.get(
     "INTERFACE_MODE",
     os.path.join(os.path.dirname(__file__), "..", "target", "interface-mode"),
+)
+EXAMPLE = os.path.join(
+    os.path.dirname(__file__), "..", "example", "on-interface-mode-change.py"
 )
 
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
@@ -38,6 +44,21 @@ SCHEMES = [
 ]
 
 TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
+
+
+def keep_asking_to_stop(process, timeout=5):
+    """Send SIGTERM to `process` until it has exited, then reap it.
+
+    Requests land all through its shutdown, right up to the end. WNOWAIT
+    leaves it unreaped while it is being signalled, so its pid can't be reused.
+    Returns the exit status.
+    """
+    deadline = time.monotonic() + timeout
+    while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        if time.monotonic() > deadline:
+            raise AssertionError("still running after %ss of stop requests" % timeout)
+        os.kill(process.pid, signal.SIGTERM)
+    return process.wait()
 
 
 class PortalTestCase(dbusmock.DBusTestCase):
@@ -201,12 +222,13 @@ class OptionsTest(PortalTestCase):
 class Watcher:
     """A running `interface-mode --watch`, read one Report at a time."""
 
-    def __init__(self, *args, flag="--watch"):
+    def __init__(self, *args, flag="--watch", env=None):
         self.process = subprocess.Popen(
             [BINARY, flag, *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=env,
         )
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.process.stdout, selectors.EVENT_READ)
@@ -226,8 +248,8 @@ class Watcher:
 
 
 class WatcherTest(PortalTestCase):
-    def watch(self, *args, flag="--watch"):
-        watcher = Watcher(*args, flag=flag)
+    def watch(self, *args, flag="--watch", env=None):
+        watcher = Watcher(*args, flag=flag, env=env)
         self.addCleanup(watcher.stop)
         return watcher
 
@@ -300,16 +322,26 @@ class WatcherTest(PortalTestCase):
         self.start_portal(PREFER_LIGHT)
         watcher = self.watch()
         self.assertJsonReport(watcher.next_line(), "light")
-        pid = watcher.process.pid
-        os.kill(pid, signal.SIGINT)
-        # Keep asking until it has exited, so requests land all through its
-        # shutdown, right up to the end. WNOWAIT leaves it to be reaped below,
-        # so its pid can't be reused while it is still being signalled.
-        deadline = time.monotonic() + 5
-        while os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-            self.assertLess(time.monotonic(), deadline, "the Watcher stops")
-            os.kill(pid, signal.SIGTERM)
-        self.assertEqual(watcher.process.wait(timeout=5), 0)
+        watcher.process.send_signal(signal.SIGINT)
+        self.assertEqual(keep_asking_to_stop(watcher.process), 0)
+
+    def test_stops_cleanly_while_connecting(self):
+        # A session bus that takes the connection but never answers holds the
+        # Watcher in its connect, so the stop request lands there every time.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bus")
+            env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS="unix:path=" + path)
+            with socket.socket(socket.AF_UNIX) as bus:
+                bus.bind(path)
+                bus.listen()
+                bus.settimeout(5)
+                for signum in (signal.SIGINT, signal.SIGTERM):
+                    with self.subTest(signal=signum.name):
+                        watcher = self.watch(env=env)
+                        connection, _ = bus.accept()
+                        with connection:
+                            watcher.process.send_signal(signum)
+                            self.assertEqual(watcher.process.wait(timeout=5), 0)
 
     def test_exits_when_the_portal_goes_away(self):
         self.start_portal(PREFER_DARK)
@@ -323,6 +355,61 @@ class WatcherTest(PortalTestCase):
         watcher = self.watch()
         self.assertEqual(watcher.process.wait(timeout=5), 2)
         self.assertEqual(watcher.process.stdout.read(), "")
+
+
+class ExampleTest(PortalTestCase):
+    """The Python hook example, run against the Watcher under test."""
+
+    def start_example(self):
+        """Start the example in its own process group; wait for its first hook."""
+        example = subprocess.Popen(
+            [sys.executable, EXAMPLE],
+            stdout=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ, INTERFACE_MODE=BINARY),
+            start_new_session=True,
+        )
+        self.addCleanup(self.kill_group, example)
+        selector = selectors.DefaultSelector()
+        selector.register(example.stdout, selectors.EVENT_READ)
+        self.assertTrue(selector.select(5), "the example runs a hook")
+        self.assertEqual(example.stdout.readline(), "Interface Mode is now light\n")
+        return example
+
+    def kill_group(self, example):
+        try:
+            os.killpg(example.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        example.wait()
+        example.stdout.close()
+
+    def assertStoppedWithItsWatcher(self, example, status):
+        self.assertEqual(status, 0)
+        # The Watcher was its only child: nothing of the group is left.
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(example.pid, 0)
+
+    def test_stops_its_watcher_when_only_it_is_asked(self):
+        self.start_portal(PREFER_LIGHT)
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum.name):
+                example = self.start_example()
+                example.send_signal(signum)
+                self.assertStoppedWithItsWatcher(example, example.wait(timeout=5))
+
+    def test_stops_on_ctrl_c_to_the_process_group(self):
+        self.start_portal(PREFER_LIGHT)
+        example = self.start_example()
+        os.killpg(example.pid, signal.SIGINT)
+        self.assertStoppedWithItsWatcher(example, example.wait(timeout=5))
+
+    def test_further_stop_requests_are_still_clean(self):
+        # e.g. Ctrl+C reaching the whole process group, then a supervisor.
+        self.start_portal(PREFER_LIGHT)
+        example = self.start_example()
+        os.killpg(example.pid, signal.SIGINT)
+        self.assertStoppedWithItsWatcher(example, keep_asking_to_stop(example))
 
 
 class BuildTest(unittest.TestCase):

@@ -12,6 +12,7 @@
 #include <gio/gio.h>
 #include <glib-unix.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -135,11 +136,20 @@ static void on_setting_changed(GDBusConnection *bus, const char *sender,
  * rest of the process, so a second request during shutdown (Ctrl+C reaching a
  * whole process group, then a parent asking again) is absorbed instead of
  * killing the Watcher on its way out, whichever thread it is delivered to.
+ *
+ * Connecting to the bus and the first read can block, and no loop is running
+ * yet to see the pipe; there is nothing to undo either, and every Report so
+ * far has been flushed. So while stop_ends_process is set, a stop request
+ * ends the process at once, with the status a stopped Watcher exits with.
  */
 static int stop_pipe[2] = {-1, -1};
+static volatile sig_atomic_t stop_ends_process;
 
 static void request_stop(int signum) {
   (void)signum;
+  if (stop_ends_process) {
+    _exit(EXIT_SUCCESS);
+  }
   int saved_errno = errno;
   /* A full pipe means a stop request is already pending. */
   ssize_t written = write(stop_pipe[1], "", 1);
@@ -154,6 +164,15 @@ static void drain_stop_requests(void) {
   }
 }
 
+static void close_stop_pipe(void) {
+  for (int i = 0; i < 2; i++) {
+    if (stop_pipe[i] != -1) {
+      close(stop_pipe[i]);
+      stop_pipe[i] = -1;
+    }
+  }
+}
+
 static bool catch_stop_requests(char **error) {
   if (stop_pipe[0] != -1) {
     /* Requests that reached an earlier Watcher on their way out were its. */
@@ -165,14 +184,20 @@ static bool catch_stop_requests(char **error) {
       !g_unix_set_fd_nonblocking(stop_pipe[0], TRUE, &err) ||
       !g_unix_set_fd_nonblocking(stop_pipe[1], TRUE, &err)) {
     *error = take_message(err);
+    close_stop_pipe();
     return false;
   }
   struct sigaction action = {0};
   action.sa_handler = request_stop;
   action.sa_flags = SA_RESTART;
   sigemptyset(&action.sa_mask);
-  sigaction(SIGINT, &action, NULL);
-  sigaction(SIGTERM, &action, NULL);
+  if (sigaction(SIGINT, &action, NULL) != 0 ||
+      sigaction(SIGTERM, &action, NULL) != 0) {
+    *error = strdup(strerror(errno));
+    signal(SIGINT, SIG_DFL);
+    close_stop_pipe();
+    return false;
+  }
   return true;
 }
 
@@ -198,18 +223,20 @@ static void on_portal_vanished(GDBusConnection *bus, const char *name,
 }
 
 bool platform_watch(ModeCallback observe, void *data, char **error) {
-  GDBusConnection *bus = session_bus(error);
-  if (bus == NULL) {
+  if (!catch_stop_requests(error)) {
     return false;
   }
-  if (!catch_stop_requests(error)) {
-    g_object_unref(bus);
+  stop_ends_process = 1;
+  GDBusConnection *bus = session_bus(error);
+  if (bus == NULL) {
+    stop_ends_process = 0;
     return false;
   }
   /* Set everything up before the first read, so neither a change nor a stop
    * request can slip in between it and the loop. */
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-  guint on_stop = g_unix_fd_add(stop_pipe[0], G_IO_IN, on_stop_requested, loop);
+  guint stop_source =
+      g_unix_fd_add(stop_pipe[0], G_IO_IN, on_stop_requested, loop);
   Observer observer = {observe, data};
   guint subscription = g_dbus_connection_signal_subscribe(
       bus, PORTAL_NAME, SETTINGS_IFACE, "SettingChanged", PORTAL_PATH,
@@ -218,6 +245,8 @@ bool platform_watch(ModeCallback observe, void *data, char **error) {
 
   Mode mode;
   bool ok = read_mode(bus, &mode, error);
+  /* From here on the loop sees stop requests, or they are absorbed. */
+  stop_ends_process = 0;
   if (ok) {
     observe(mode, data);
     /* Only now: the read may have just started the portal by activation. */
@@ -232,7 +261,7 @@ bool platform_watch(ModeCallback observe, void *data, char **error) {
       ok = false;
     }
   }
-  g_source_remove(on_stop);
+  g_source_remove(stop_source);
   g_main_loop_unref(loop);
   g_dbus_connection_signal_unsubscribe(bus, subscription);
   g_object_unref(bus);

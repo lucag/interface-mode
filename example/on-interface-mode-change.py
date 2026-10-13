@@ -32,21 +32,37 @@ HOOKS = {"dark": on_dark, "light": on_light}
 
 
 def main():
-    # Stop on SIGTERM the same way as on Ctrl+C.
-    signal.signal(signal.SIGTERM, signal.default_int_handler)
-    with subprocess.Popen(
-        [INTERFACE_MODE, "--watch"], stdout=subprocess.PIPE, text=True
-    ) as watcher:
-        try:
-            # The first Report is the mode at startup, so the right hook runs
-            # straight away; after that each Report is a change.
-            for line in watcher.stdout:
-                HOOKS[json.loads(line)["mode"]]()
-        except KeyboardInterrupt:
-            # The signal may have reached only this script, so stop the
-            # Watcher too; it exits 0 on SIGTERM.
+    watcher = None
+    stopping = False
+
+    def stop(signum, frame):
+        # The signal may have reached only this script, so pass it on. The
+        # Watcher exits 0 on SIGTERM, however often asked, and the loop
+        # below ends with its output; a hook already running finishes first.
+        nonlocal stopping
+        stopping = True
+        if watcher is not None:
             watcher.terminate()
-    return watcher.returncode
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    watcher = subprocess.Popen(
+        [INTERFACE_MODE, "--watch"], stdout=subprocess.PIPE, text=True
+    )
+    if stopping:
+        # Asked to stop while the Watcher was starting.
+        watcher.terminate()
+    with watcher:
+        # The first Report is the mode at startup, so the right hook runs
+        # straight away; after that each Report is a change.
+        for line in watcher.stdout:
+            HOOKS[json.loads(line)["mode"]]()
+    # Nothing is left to stop. Python puts its own handlers back to the
+    # default on the way out, which a late request would die by.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    # A Watcher stopped this early may not have caught the signal yet.
+    return 0 if stopping else watcher.returncode
 
 
 if __name__ == "__main__":
