@@ -14,6 +14,7 @@ target/
 .DS_Store
 .cache/clangd/index
 /compile_commands.json
+/.clangd
 .nvim-spell.en.utf-8.add
 
 # Python
