@@ -25,7 +25,9 @@ HEADERS = interface-mode.h stop.h
 
 ifeq ($(UNAME),Darwin)
 
-# macOS reads the Interface Mode through AppKit.
+# macOS reads the Interface Mode through AppKit, so it builds with Apple's
+# compiler, whatever clang comes first on PATH.
+CC = xcrun clang
 SOURCES += macos.m
 PLATFORM_CFLAGS = -mmacosx-version-min=10.14 -fobjc-arc
 PLATFORM_LIBS = -framework AppKit -framework Foundation

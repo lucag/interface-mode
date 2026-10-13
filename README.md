@@ -121,6 +121,8 @@ On Linux, `make test` runs [`tests/test_linux.py`](tests/test_linux.py) with the
 
 On macOS, `make test` runs [`tests/test_macos.py`](tests/test_macos.py) with the system `python3`. The Interface Mode can't be set without changing it for you, so it checks only the contract around it: options, output shapes, the exit status agreeing with `--text`, and the Watcher's startup Report and clean stop. Both suites share the platform-neutral checks in [`tests/contract.py`](tests/contract.py).
 
+To check the macOS Watcher against real changes, run [`tests/live_macos.sh`](tests/live_macos.sh) at your Mac. It switches your Mac to the other Interface Mode and back (restoring yours however it ends), expects a Report for each switch, and expects exit 0 on SIGTERM.
+
 ## Breaking changes
 
 The unified command changes the old macOS contract on purpose, all at once, so scripts need updating only once:
@@ -151,6 +153,7 @@ interface-mode/
 │   ├── contract.py           # checks every platform shares
 │   ├── test_linux.py         # black-box tests against a fake portal
 │   ├── test_macos.py         # contract-only tests on macOS
+│   ├── live_macos.sh         # live check against real appearance changes, run by hand
 │   └── Dockerfile            # Linux test environment for make test-linux
 ├── docs/
 │   ├── adr/                  # architecture decision records

@@ -14,5 +14,5 @@ Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/age
 
 ## Working on the code
 
-- **Coding standards**: read `CODING_STANDARDS.md` before writing a test, a signal handler or a commit message, and before reviewing a diff.
+- **Coding standards**: read `CODING_STANDARDS.md` before writing a backend, a test, a signal handler or a commit message, before editing an ADR, and before reviewing a diff.
 - **Linux tests from any host**: `make test-linux` runs the suite in Docker (`tests/Dockerfile`). Docker Desktop must be running; on macOS, `open -a Docker` starts it.
