@@ -1,0 +1,25 @@
+# A systemd user unit that runs on-interface-mode-change.sh for the whole
+# graphical session, restarting it if it exits with an error.
+#
+# To install (assuming interface-mode was installed with PREFIX=$HOME/.local):
+#
+#   cp on-interface-mode-change.sh ~/.local/bin/
+#   cp interface-mode-hooks.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now interface-mode-hooks.service
+#
+# Then watch it with: journalctl --user -fu interface-mode-hooks
+
+[Unit]
+Description=Run hooks when the desktop's Interface Mode changes
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Environment=INTERFACE_MODE=%h/.local/bin/interface-mode
+ExecStart=%h/.local/bin/on-interface-mode-change.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
