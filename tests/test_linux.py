@@ -8,6 +8,8 @@ import datetime
 import json
 import os
 import re
+import selectors
+import signal
 import subprocess
 import unittest
 
@@ -74,6 +76,20 @@ class PortalTestCase(dbusmock.DBusTestCase):
         stamped = datetime.datetime.fromisoformat(report["timestamp"])
         now = datetime.datetime.now(datetime.timezone.utc)
         self.assertLess(abs((now - stamped).total_seconds()), 60)
+
+    def emit_setting(self, namespace, key, value):
+        self.mock.EmitSignal(
+            SETTINGS, "SettingChanged", "ssv", [namespace, key, value]
+        )
+
+    def change_scheme(self, scheme):
+        """Switch the fake portal to `scheme` and announce it as a portal does."""
+        self.set_scheme(scheme)
+        self.emit_setting(
+            "org.freedesktop.appearance",
+            "color-scheme",
+            dbus.UInt32(scheme, variant_level=1),
+        )
 
     def run_tool(self, *args, env=None):
         return subprocess.run(
@@ -176,6 +192,105 @@ class OptionsTest(PortalTestCase):
         self.start_portal(PREFER_LIGHT)
         result = self.run_tool("-t", "--verbose")
         self.assertEqual((result.returncode, result.stdout), (0, "light\n"))
+
+
+class Watcher:
+    """A running `interface-mode --watch`, read one Report at a time."""
+
+    def __init__(self, *args):
+        self.process = subprocess.Popen(
+            [BINARY, "--watch", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.process.stdout, selectors.EVENT_READ)
+
+    def next_line(self, timeout=5):
+        """The next line, or None if nothing arrives within `timeout`."""
+        if not self.selector.select(timeout):
+            return None
+        return self.process.stdout.readline()
+
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.kill()
+        self.process.wait()
+        self.process.stdout.close()
+        self.process.stderr.close()
+
+
+class WatcherTest(PortalTestCase):
+    def watch(self, *args):
+        watcher = Watcher(*args)
+        self.addCleanup(watcher.stop)
+        return watcher
+
+    def test_reports_the_mode_on_startup(self):
+        self.start_portal(PREFER_DARK)
+        watcher = self.watch()
+        self.assertJsonReport(watcher.next_line(), "dark")
+        self.assertIsNone(watcher.process.poll(), "the Watcher keeps running")
+
+    def test_reports_each_change(self):
+        self.start_portal(PREFER_DARK)
+        watcher = self.watch()
+        self.assertJsonReport(watcher.next_line(), "dark")
+        self.change_scheme(PREFER_LIGHT)
+        self.assertJsonReport(watcher.next_line(), "light")
+        self.change_scheme(PREFER_DARK)
+        self.assertJsonReport(watcher.next_line(), "dark")
+
+    def test_ignores_everything_but_a_new_mode(self):
+        self.start_portal(PREFER_DARK)
+        watcher = self.watch()
+        self.assertJsonReport(watcher.next_line(), "dark")
+
+        self.change_scheme(PREFER_DARK)  # duplicate signal, same mode
+        self.emit_setting(
+            "org.freedesktop.appearance",
+            "accent-color",
+            dbus.Struct((0.1, 0.2, 0.3), signature="ddd", variant_level=1),
+        )
+        self.emit_setting(
+            "org.gnome.desktop.interface",
+            "color-scheme",
+            dbus.String("prefer-light", variant_level=1),
+        )
+        self.change_scheme(PREFER_LIGHT)
+
+        self.assertJsonReport(watcher.next_line(), "light")
+        self.assertIsNone(watcher.next_line(timeout=0.5))
+
+    def test_text_reports(self):
+        self.start_portal(PREFER_LIGHT)
+        watcher = self.watch("--text")
+        self.assertEqual(watcher.next_line(), "light\n")
+        self.change_scheme(PREFER_DARK)
+        self.assertEqual(watcher.next_line(), "dark\n")
+
+    def test_stops_cleanly_on_sigint_and_sigterm(self):
+        self.start_portal(PREFER_LIGHT)
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum.name):
+                watcher = self.watch()
+                self.assertJsonReport(watcher.next_line(), "light")
+                watcher.process.send_signal(signum)
+                self.assertEqual(watcher.process.wait(timeout=5), 0)
+
+    def test_exits_when_the_portal_goes_away(self):
+        self.start_portal(PREFER_DARK)
+        watcher = self.watch()
+        self.assertJsonReport(watcher.next_line(), "dark")
+        self.stop_portal()
+        self.assertEqual(watcher.process.wait(timeout=5), 2)
+        self.assertIn("interface-mode:", watcher.process.stderr.read())
+
+    def test_no_portal_at_startup_is_an_error(self):
+        watcher = self.watch()
+        self.assertEqual(watcher.process.wait(timeout=5), 2)
+        self.assertEqual(watcher.process.stdout.read(), "")
 
 
 if __name__ == "__main__":

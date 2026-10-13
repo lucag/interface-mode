@@ -8,6 +8,8 @@
 #include "interface-mode.h"
 
 #include <gio/gio.h>
+#include <glib-unix.h>
+#include <signal.h>
 #include <string.h>
 
 #define PORTAL_NAME "org.freedesktop.portal.Desktop"
@@ -38,15 +40,9 @@ static GVariant *unwrap(GVariant *reply) {
   return value;
 }
 
-bool platform_read_mode(Mode *mode, char **error) {
+/* Read color-scheme over `bus`; on failure set *error and return false. */
+static bool read_mode(GDBusConnection *bus, Mode *mode, char **error) {
   GError *err = NULL;
-  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
-  if (bus == NULL) {
-    *error = strdup(err->message);
-    g_error_free(err);
-    return false;
-  }
-
   GVariant *reply = call_settings(bus, "ReadOne", &err);
   /* Portals before Settings version 2 only have the deprecated Read. */
   if (reply == NULL &&
@@ -54,7 +50,6 @@ bool platform_read_mode(Mode *mode, char **error) {
     g_clear_error(&err);
     reply = call_settings(bus, "Read", &err);
   }
-  g_object_unref(bus);
   if (reply == NULL) {
     *error = strdup(err->message);
     g_error_free(err);
@@ -73,4 +68,111 @@ bool platform_read_mode(Mode *mode, char **error) {
                                                                   : MODE_LIGHT;
   g_variant_unref(value);
   return true;
+}
+
+static GDBusConnection *session_bus(char **error) {
+  GError *err = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (bus == NULL) {
+    *error = strdup(err->message);
+    g_error_free(err);
+  }
+  return bus;
+}
+
+bool platform_read_mode(Mode *mode, char **error) {
+  GDBusConnection *bus = session_bus(error);
+  if (bus == NULL) {
+    return false;
+  }
+  bool ok = read_mode(bus, mode, error);
+  g_object_unref(bus);
+  return ok;
+}
+
+typedef struct {
+  ModeCallback observe;
+  void *data;
+} Observer;
+
+static void on_setting_changed(GDBusConnection *bus, const char *sender,
+                               const char *path, const char *iface,
+                               const char *signal, GVariant *params,
+                               gpointer user_data) {
+  (void)bus, (void)sender, (void)path, (void)iface, (void)signal;
+  Observer *observer = user_data;
+  const char *ns, *key;
+  GVariant *value;
+  g_variant_get(params, "(&s&sv)", &ns, &key, &value);
+  while (g_variant_is_of_type(value, G_VARIANT_TYPE_VARIANT)) {
+    GVariant *inner = g_variant_get_variant(value);
+    g_variant_unref(value);
+    value = inner;
+  }
+  if (strcmp(ns, APPEARANCE_NS) == 0 && strcmp(key, COLOR_SCHEME_KEY) == 0 &&
+      g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+    observer->observe(g_variant_get_uint32(value) == COLOR_SCHEME_PREFER_DARK
+                          ? MODE_DARK
+                          : MODE_LIGHT,
+                      observer->data);
+  }
+  g_variant_unref(value);
+}
+
+static gboolean quit_loop(gpointer loop) {
+  g_main_loop_quit(loop);
+  return G_SOURCE_CONTINUE;
+}
+
+typedef struct {
+  GMainLoop *loop;
+  bool vanished;
+} PortalPresence;
+
+static void on_portal_vanished(GDBusConnection *bus, const char *name,
+                               gpointer user_data) {
+  (void)bus, (void)name;
+  PortalPresence *presence = user_data;
+  presence->vanished = true;
+  g_main_loop_quit(presence->loop);
+}
+
+bool platform_watch(ModeCallback observe, void *data, char **error) {
+  GDBusConnection *bus = session_bus(error);
+  if (bus == NULL) {
+    return false;
+  }
+  /* Set everything up before the first read, so neither a change nor a stop
+   * request can slip in between it and the loop. */
+  GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+  guint on_sigint = g_unix_signal_add(SIGINT, quit_loop, loop);
+  guint on_sigterm = g_unix_signal_add(SIGTERM, quit_loop, loop);
+  Observer observer = {observe, data};
+  guint subscription = g_dbus_connection_signal_subscribe(
+      bus, PORTAL_NAME, SETTINGS_IFACE, "SettingChanged", PORTAL_PATH,
+      APPEARANCE_NS, G_DBUS_SIGNAL_FLAGS_NONE, on_setting_changed, &observer,
+      NULL);
+
+  Mode mode;
+  bool ok = read_mode(bus, &mode, error);
+  if (ok) {
+    observe(mode, data);
+    /* Only now: the read may have just started the portal by activation. */
+    PortalPresence presence = {loop, false};
+    guint watch = g_bus_watch_name_on_connection(
+        bus, PORTAL_NAME, G_BUS_NAME_WATCHER_FLAGS_NONE, NULL,
+        on_portal_vanished, &presence, NULL);
+    g_main_loop_run(loop);
+    g_bus_unwatch_name(watch);
+    if (presence.vanished) {
+      *error = strdup("the desktop portal went away");
+      ok = false;
+    }
+  }
+  g_source_remove(on_sigint);
+  g_source_remove(on_sigterm);
+  g_main_loop_unref(loop);
+  g_dbus_connection_signal_unsubscribe(bus, subscription);
+  g_object_unref(bus);
+  return ok;
 }

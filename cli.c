@@ -65,11 +65,44 @@ static int usage_error(const char *fmt, const char *arg) {
   return EXIT_ERROR;
 }
 
+/* Turns the backend's observations into Reports: one per new mode. */
+typedef struct {
+  Format format;
+  bool reported;
+  Mode last;
+} Reporter;
+
+static void report_if_changed(Mode mode, void *data) {
+  Reporter *reporter = data;
+  if (reporter->reported && reporter->last == mode) {
+    return;
+  }
+  reporter->reported = true;
+  reporter->last = mode;
+  print_report(reporter->format, mode);
+}
+
+static int watch(Format format) {
+  Reporter reporter = {format == FORMAT_NONE ? FORMAT_JSON : format, false,
+                       MODE_LIGHT};
+  char *error = NULL;
+  if (!platform_watch(report_if_changed, &reporter, &error)) {
+    fprintf(stderr, "interface-mode: %s\n", error);
+    free(error);
+    return EXIT_ERROR;
+  }
+  return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
   Format format = FORMAT_NONE;
+  bool watching = false;
   for (int i = 1; i < argc; i++) {
     Format requested;
-    if (is_option(argv[i], "-t", "--text") ||
+    if (is_option(argv[i], "-w", "--watch")) {
+      watching = true;
+      continue;
+    } else if (is_option(argv[i], "-t", "--text") ||
         is_option(argv[i], "-v", "--verbose")) {
       requested = FORMAT_TEXT;
     } else if (is_option(argv[i], "-j", "--json")) {
@@ -85,6 +118,9 @@ int main(int argc, char **argv) {
                          argv[i]);
     }
     format = requested;
+  }
+  if (watching) {
+    return watch(format);
   }
 
   Mode mode;
