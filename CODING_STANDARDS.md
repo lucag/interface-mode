@@ -1,6 +1,6 @@
 # Coding standards
 
-Rules this repo holds code and commits to, beyond what the compiler and the tests already enforce. `/code-review` checks a diff against them.
+Judgement calls this repo holds code to. `/code-review` checks a diff against them. Mechanical rules are checks instead: CI (`.github/workflows/test.yml`) builds with `-Werror` and runs both platforms' tests on every push, and every commit message must name its issue (the `commit-msg` hook from `make hooks`, and CI).
 
 ## Backends
 
@@ -14,20 +14,9 @@ Rules this repo holds code and commits to, beyond what the compiler and the test
   - cover the whole window (`keep_asking_to_stop()` sends SIGTERM until the process has exited).
   
   A test that sleeps a varying amount, or acts only `if` the process is still in some state, can pass without exercising anything.
-- **Every Linux change is checked with `make test-linux`.** It runs the suite in Docker, so it works on any host. Run it before committing.
-- **Every macOS change is checked with `make test` on a Mac.** A change to `cli.c`, `stop.c`, either header or `tests/contract.py` touches both platforms, so it gets both runs.
 
 ## Signals
 
-Stop handling follows [ADR 0003](docs/adr/0003-a-stopped-watcher-always-exits-0.md): every stop exits 0, early and repeated ones included. Handlers stay installed until the process exits, and they do async-signal-safe work only. This applies to the examples as well as the Watcher.
+Stop handling follows [ADR 0003](docs/adr/0003-a-stopped-watcher-always-exits-0.md), in the examples as well as the Watcher.
 
 Under ARC, anything that must outlive setup (a dispatch source, an observer) is held in a strong reference for as long as the Watcher runs. A local variable is released when its scope ends, which silently cancels a dispatch source.
-
-## Commits
-
-- **Name the issue.** A commit message says which issue it serves (`Refs #4`, `Closes #6`). That is how `/code-review` finds the spec for a diff.
-- **Say what ran.** A commit message names the suites run before committing, with their results (`make test-linux 26/26; make test on macOS 11/11`). A reviewer can't verify a run nobody recorded.
-
-## Decisions
-
-- **An accepted ADR changes only with the maintainer's sign-off.** When the code needs a decision to read differently, propose the new wording, show it, and wait for a yes before editing `docs/adr/`.

@@ -1,0 +1,7 @@
+#!/bin/sh
+#
+# Every commit message names the issue it serves (#<n>), which is how
+# /code-review finds the spec for a diff. Enable with `make hooks`.
+# CI runs the same check on every pushed commit: tests/check-commit-messages.sh.
+
+exec "$(git rev-parse --show-toplevel)/tests/check-commit-messages.sh" --file "$1"

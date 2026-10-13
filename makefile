@@ -83,6 +83,10 @@ run-watch: $(TARGET_DIR)/interface-mode
 $(TARGET_DIR):
 	mkdir -p $(TARGET_DIR)
 
+# Use the tracked git hooks (.githooks): commit messages must name an issue.
+hooks:
+	git config core.hooksPath .githooks
+
 # Clean
 clean:
 	rm -rf $(TARGET_DIR)
@@ -93,6 +97,7 @@ check: clean all test
 # Build and run the Linux tests in Docker (tests/Dockerfile), from any host.
 # The container works on a copy, so the host's target/ is left alone.
 test-linux:
+	@docker info >/dev/null 2>&1 || { echo "test-linux: Docker isn't running; start it (on macOS: open -a Docker)" >&2; exit 1; }
 	docker build -q -t interface-mode-test tests
 	docker run --rm -v "$(CURDIR)":/src:ro interface-mode-test \
 		sh -c 'cp -r /src /w && cd /w && rm -rf $(TARGET_DIR) && make test'
@@ -135,6 +140,7 @@ help:
 	@echo "  clean            - Remove built executables"
 	@echo "  check            - Clean, build and test"
 	@echo "  test-linux       - Run the Linux tests in Docker, from any host"
+	@echo "  hooks            - Use the repo's git hooks (commit messages name an issue)"
 	@echo "  install          - Install to \$$PREFIX/bin (default: /usr/local/bin)"
 	@echo "  uninstall        - Remove from \$$PREFIX/bin"
 	@echo "  install-info     - Show installation configuration"
@@ -148,4 +154,4 @@ help:
 	@echo "  make install PREFIX=\$$HOME/.local # Install to user directory"
 	@echo "  sudo make install PREFIX=/usr   # Install system-wide"
 
-.PHONY: all clean test test-linux check dev run-watch install uninstall install-info help
+.PHONY: all clean test test-linux hooks check dev run-watch install uninstall install-info help

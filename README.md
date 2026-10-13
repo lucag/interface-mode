@@ -110,7 +110,10 @@ The makefile picks the platform's sources by `uname`, and everything is built in
 ```bash
 make test         # on Linux
 make test-linux   # from any host, in Docker
+make hooks        # once per clone: commit messages must name an issue (#<n>)
 ```
+
+CI runs both platforms' suites, with warnings as errors, on every push.
 
 On Linux, `make test` runs [`tests/test_linux.py`](tests/test_linux.py) with the system `python3`. It drives the built binary as a black box against a fake desktop portal on a private session bus, so your real desktop settings are never read or changed. It needs:
 

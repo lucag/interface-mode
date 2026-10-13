@@ -1,0 +1,46 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang make pkg-config libglib2.0-dev python3-dbusmock dbus
+      - name: Build with warnings as errors, and test
+        run: make CFLAGS="-Wall -Wextra -Werror" test
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with warnings as errors, and test
+        run: make CFLAGS="-Wall -Wextra -Werror" test
+
+  commit-messages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every new commit names its issue
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A new branch has no "before"; then check just the pushed commit.
+          from=${BASE:-$BEFORE}
+          if [ -z "$from" ] || [ "$from" = 0000000000000000000000000000000000000000 ]; then
+            range="$HEAD^!"
+          else
+            range="$from..$HEAD"
+          fi
+          tests/check-commit-messages.sh "$range"
